@@ -5,6 +5,9 @@ on:
     - cron: '30 16 * * *'
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -18,22 +21,13 @@ jobs:
         python-version: '3.10'
 
     - name: Kutuphaneleri Yukle
-      run: |
-        python -m pip install --upgrade pip
-        pip install pandas openpyxl requests
+      run: pip install pandas
 
-    - name: Raporu Calistir
+    - name: Web Sayfasini Uret
       run: python main.py
 
-    - name: E-Posta Kutuma Otomatik Postala
-      uses: dawidd6/action-send-mail@v3
+    - name: Web Sitesini Canliya Al (GitHub Pages)
+      uses: JamesIves/github-pages-deploy-action@v4
       with:
-        server_address: ://gmail.com
-        server_port: 465
-        username: ${{ secrets.MAIL_USER }}
-        password: ${{ secrets.MAIL_PASS }}
-        subject: Günlük Otomatik BES Durum Raporu
-        to: ${{ secrets.MAIL_USER }}
-        from: BES Yapay Zeka Analiz Ekibi
-        body: Yapay zeka ekibiniz tarafından hazırlanan günlük genişlik ayarlı, kâr/zarar hesaplamalı Excel BES durum raporunuz ekte yer almaktadır.
-        attachments: "*.xlsx"
+        folder: public
+        branch: gh-pages
