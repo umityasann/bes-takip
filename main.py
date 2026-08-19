@@ -1,8 +1,4 @@
 import os
-import smtplib
-from email.mime.multipart import MIMEMultipart
-from email.mime.base import MIMEBase
-from email import encoders
 import pandas as pd
 from datetime import datetime
 
@@ -53,7 +49,7 @@ for kod, info in fon_tanimlari.items():
     ])
 
 sutunlar = [
-    'Fon Kodu', 'Fon Adi', 'Agirlik (%)', 'Yatiriland Tutar (TL)', 
+    'Fon Kodu', 'Fon Adi', 'Agirlik (%)', 'Yatirilan Tutar (TL)', 
     'Giris Fiyati (TL)', 'Guncel Fiyat (TL)', 'Toplam Degisim (%)', 
     'Portfoye Katki (%)', 'Net Kar/Zarar (TL)'
 ]
@@ -70,36 +66,5 @@ toplam_satiri = pd.DataFrame([[
 df = pd.concat([df, toplam_satiri], ignore_index=True)
 
 excel_adi = f"BES_Raporu_{tarih_str}.xlsx"
-
-# BURASI ÇÖKMEYİ ENGELLEYEN EN SADE MOTOR AYARIDIR
-try:
-    df.to_excel(excel_adi, index=False)
-    print("Saf Excel dosyasi basariyla kaydedildi.")
-except Exception as e:
-    print(f"Excel kayit hatasi: {e}")
-
-# KORUMALI E-POSTA MOTORU
-try:
-    mail_user = os.environ.get('MAIL_USER')
-    mail_pass = os.environ.get('MAIL_PASS')
-
-    if mail_user and mail_pass:
-        msg = MIMEMultipart()
-        msg['From'] = mail_user
-        msg['To'] = mail_user
-        msg['Subject'] = f"Gunluk Otomatik BES Durum Raporu - {tarih_str}"
-
-        with open(excel_adi, "rb") as attachment:
-            part = MIMEBase("application", "octet-stream")
-            part.set_payload(attachment.read())
-            encoders.encode_base64(part)
-            part.add_header("Content-Disposition", f"attachment; filename= {excel_adi}")
-            msg.attach(part)
-
-        server = smtplib.SMTP_SSL('://gmail.com', 465)
-        server.login(mail_user, mail_pass)
-        server.sendmail(mail_user, mail_user, msg.as_string())
-        server.quit()
-        print("E-posta kutunuza basariyla gönderildi.")
-except Exception as e:
-    print(f"E-posta adimi atlatildi: {e}")
+df.to_excel(excel_adi, index=False)
+print("Excel basariyla diske yazildi.")
