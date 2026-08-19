@@ -36,8 +36,8 @@ tahmini_guncel_piyasa = {
     'GEL': 0.442970, 'GEH': 2.833800, 'EMY': 0.010250, 'GHG': 1.220412, 'GHH': 0.401200
 }
 
-labels_js = []
-values_js = []
+labels_list = []
+values_list = []
 
 for kod, info in fon_tanimlari.items():
     giris_fiy = float(info['giris_fiyati'])
@@ -51,11 +51,11 @@ for kod, info in fon_tanimlari.items():
     toplam_maliyet += fon_maliyeti
     toplam_guncel_deger += fon_guncel_degeri
     
-    labels_js.append(f"'{kod}'")
-    values_js.append(f"{fon_net_kar_zarar:.2f}")
+    labels_list.append(f'"{kod}"')
+    values_list.append(f"{fon_net_kar_zarar:.2f}")
     
-    renk = "green" if fon_net_kar_zarar >= 0 else "red"
-    arti_eksi = "+" if fon_net_kar_zarar >= 0 else ""
+    renk = "green" if font_net_kar_zarar >= 0 else "red"
+    arti_eksi = "+" if font_net_kar_zarar >= 0 else ""
     
     rapor_data.append(f"""
     <tr>
@@ -73,8 +73,11 @@ for kod, info in fon_tanimlari.items():
 genel_kar = toplam_guncel_deger - toplam_maliyet
 dogru_genel_degisim = (genel_kar / toplam_maliyet) * 100
 
-html_icerik = f"""
-<!DOCTYPE html>
+js_labels = ", ".join(labels_list)
+js_values = ", ".join(values_list)
+
+# Parantez çakışmasını önlemek için emniyetli HTML metni
+html_icerik = f"""<!DOCTYPE html>
 <html>
 <head>
     <title>BES Canli Takip Paneli</title>
@@ -86,7 +89,7 @@ html_icerik = f"""
     <div style="max-width:1100px; margin:0 auto; background:white; padding:30px; border-radius:16px; box-shadow:0 10px 25px rgba(0,0,0,0.03); border:1px solid #e2e8f0;">
         <div style="display:flex; justify-content:between; align-items:center; border-bottom:2px solid #f1f5f9; padding-bottom:20px; margin-bottom:25px; flex-wrap:wrap; gap:15px;">
             <div>
-                <h1 style="margin:0; color:#0f172a; font-size:24px; font-weight:800; letter-spacing:-0.5px;">Garanti BES Portföy Takip Ekibi</h1>
+                <h1 style="margin:0; color:#0f172a; font-size:24px; font-weight:800; letter-spacing:-0.5px;">Garanti BES Portföy Takip Paneli</h1>
                 <p style="color:#64748b; font-size:14px; margin:5px 0 0 0;">Yapay Zeka Analiz Paneli | Son Güncelleme: <strong>{tarih_str} - 19:30</strong></p>
             </div>
         </div>
@@ -129,7 +132,7 @@ html_icerik = f"""
 
         <div style="border:1px solid #e2e8f0; border-radius:12px; padding:20px; background:#f8fafc;">
             <h3 style="margin-top:0; color:#1e293b; font-size:16px;">📊 Fon Bazlı Net Kâr Dağılım Grafiği (TL)</h3>
-            <div style="max-width:600px; margin:0 auto; height:300px;">
+            <div style="max-width:700px; margin:0 auto; height:320px;">
                 <canvas id="besChart"></canvas>
             </div>
         </div>
@@ -140,12 +143,12 @@ html_icerik = f"""
         new Chart(ctx, {{
             type: 'bar',
             data: {{
-                labels: [{", ".join(labels_js)}],
+                labels: [{js_labels}],
                 datasets: [{{
                     label: 'Net Kâr (TL)',
-                    data: [{", ".join(values_js)}],
-                    backgroundColor: '#10b981',
-                    borderRadius: 6,
+                    data: [{js_values}],
+                    backgroundColor: ['#3b82f6', '#10b981', '#f59e0b', '#ec4899', '#8b5cf6'],
+                    borderRadius: 8,
                     borderWidth: 0
                 }}]
             }},
@@ -164,4 +167,4 @@ html_icerik = f"""
 os.makedirs("public", exist_ok=True)
 with open("public/index.html", "w", encoding="utf-8") as f:
     f.write(html_icerik)
-print("Hatasiz otomatik web paneli basariyla yuklendi.")
+print("Grafik entegrasyonu başarıyla tamamlandı.")
