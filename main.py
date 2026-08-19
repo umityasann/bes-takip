@@ -2,10 +2,11 @@ import os
 import pandas as pd
 from datetime import datetime
 import openpyxl
-from openpyxl.chart import BarChart, PieChart, Reference
+from openpyxl.chart import BarChart, Reference
+from openpyxl.chart.label import DataLabelList
 
 # ==============================================================================
-# SİZİN PORTFÖY AYARLARINIZ
+# PORTFÖY AYARLARINIZ
 # ==============================================================================
 ay_sayisi = 1  
 aylik_odeme = 5000.0
@@ -38,6 +39,7 @@ for kod, info in fon_tanimlari.items():
     giris_fiy = float(info['giris_fiyati'])
     guncel_fiy = float(tahmini_guncel_piyasa.get(kod, giris_fiy))
     
+    # Gerçek kümülatif değişim oranı
     toplam_degisim_orani = float(((guncel_fiy - giris_fiy) / giris_fiy) * 100)
     
     fon_maliyeti = float(toplam_anapara * info['agirlik'])
@@ -50,15 +52,8 @@ for kod, info in fon_tanimlari.items():
     toplam_portfoye_katki += fon_portfoye_katki
     
     rapor_data.append([
-        kod, 
-        info['ad'], 
-        float(info['agirlik'] * 100),
-        round(fon_maliyeti, 2),
-        round(giris_fiy, 3),          
-        round(guncel_fiy, 3),         
-        round(toplam_degisim_orani, 2), 
-        round(fon_portfoye_katki, 2), 
-        round(fon_net_kar_zarar, 2)
+        kod, info['ad'], float(info['agirlik'] * 100), fon_maliyeti,
+        giris_fiy, guncel_fiy, toplam_degisim_orani, fon_portfoye_katki, fon_net_kar_zarar
     ])
 
 sutunlar = [
@@ -68,51 +63,58 @@ sutunlar = [
 ]
 df = pd.DataFrame(rapor_data, columns=sutunlar)
 
+# DOĞRU TOPLAM DEĞİŞİM HESABI: (Toplam Kar / Toplam Maliyet) * 100
 genel_kar = float(toplam_guncel_deger - toplam_maliyet)
-genel_degisim = float((genel_kar / toplam_maliyet) * 100)
+dogru_genel_degisim = float((genel_kar / toplam_maliyet) * 100)
 
 toplam_satiri = pd.DataFrame([[
-    'TOPLAM', 
-    'Genel Portföy Durumu', 
-    100.0, 
-    round(toplam_maliyet, 2),
-    None, 
-    None, 
-    round(genel_degisim, 2), 
-    round(toplam_portfoye_katki, 2), 
-    round(genel_kar, 2)
+    'TOPLAM', 'Genel Portföy Durumu', 100.0, toplam_maliyet,
+    None, None, dogru_genel_degisim, toplam_portfoye_katki, genel_kar
 ]], columns=sutunlar)
 
 df = pd.concat([df, toplam_satiri], ignore_index=True)
 
 excel_adi = f"BES_Raporu_{tarih_str}.xlsx"
 
-# Pandas ile veriyi yazıp openpyxl ile grafik ekleme işlemi
+# Excel Biçimlendirme ve Grafik Geliştirme Motoru
 with pd.ExcelWriter(excel_adi, engine='openpyxl') as writer:
     df.to_excel(writer, index=False, sheet_name='BES Takip')
     
-    # Grafik motorunu çağırıyoruz
     workbook = writer.book
     worksheet = writer.sheets['BES Takip']
     
-    # 1. GRAFİK: NET KÂR / ZARAR ÇUBUK GRAFİĞİ
+    # TÜM TABLOYU STANDART 3 BASAMAK (0,000) FORMATINA GETİRME
+    # C sütunundan I sütununa kadar olan tüm sayısal hücreleri kapsar
+    for row in range(2, worksheet.max_row + 1):
+        for col in range(3, 10):
+            cell = worksheet.cell(row=row, column=col)
+            if cell.value is not None:
+                cell.number_format = '0.000'
+
+    # DETAYLANDIRILMIŞ GRAFİK MOTORU
     chart_bar = BarChart()
     chart_bar.type = "col"
-    chart_bar.style = 10
-    chart_bar.title = "Fon Bazlı Net Kâr / Zarar (TL)"
-    chart_bar.y_axis.title = "TL Oranı"
-    chart_bar.x_axis.title = "Fon Kodu"
+    chart_bar.style = 11
+    chart_bar.title = "Fon Bazlı Net Kâr / Zarar Detayı (TL)"
+    chart_bar.y_axis.title = "Kâr / Zarar miktar (TL)"
+    chart_bar.x_axis.title = "Fon Kodları"
+    chart_bar.width = 18   # Grafik genişliği artırıldı
+    chart_bar.height = 10  # Grafik yüksekliği artırıldı
     
-    # Veri referansı (Net Kâr/Zarar sütunu olan 'I' sütunu, 1. satırdan 6. satıra kadar)
+    # Grafik Veri Kaynağı (Net Kâr/Zarar sütunu: I2 - I6)
     data_bar = Reference(worksheet, min_col=9, min_row=1, max_row=6)
-    # Kategori referansı (Fon Kodları olan 'A' sütunu)
+    # Grafik Eksen Etiketleri (Fon Kodları sütunu: A2 - A6)
     cats_bar = Reference(worksheet, min_col=1, min_row=2, max_row=6)
     
     chart_bar.add_data(data_bar, titles_from_data=True)
     chart_bar.set_categories(cats_bar)
-    chart_bar.legend = None # Tek seri olduğu için lejantı gizle
+    chart_bar.legend = None 
     
-    # Grafiği Excel'de A9 hücre konumunun altına yerleştir
+    # Çubukların üzerine net kâr rakamlarını (Data Labels) yazdırma komutu
+    chart_bar.dataLabels = DataLabelList()
+    chart_bar.dataLabels.showVal = True
+    
+    # Grafiği konumlandırma
     worksheet.add_chart(chart_bar, "A9")
 
-print("Grafikli Excel Raporu başarıyla üretildi.")
+print("Yeni standart kurallı ve detaylı grafik raporu üretildi.")
