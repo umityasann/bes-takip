@@ -5,9 +5,6 @@ from email.mime.base import MIMEBase
 from email import encoders
 import pandas as pd
 from datetime import datetime
-import openpyxl
-from openpyxl.chart import BarChart, Reference
-from openpyxl.utils import get_column_letter
 
 # ==============================================================================
 # PORTFÖY AYARLARINIZ
@@ -17,11 +14,11 @@ aylik_odeme = 5000.0
 toplam_anapara = float(aylik_odeme * ay_sayisi)
 
 fon_tanimlari = {
-    'GEL': {'ad': 'Para Piyasası Emeklilik Yatırım Fonu', 'agirlik': 0.20, 'giris_fiyati': 0.436406},
-    'GEH': {'ad': 'Hisse Senedi Emeklilik Yatırım Fonu', 'agirlik': 0.30, 'giris_fiyati': 2.779911},
-    'EMY': {'ad': 'Altın Emeklilik Yatırım Fonu', 'agirlik': 0.20, 'giris_fiyati': 0.009987},
-    'GHG': {'ad': 'Dış Borçlanma Araçları Emeklilik Yatırım Fonu', 'agirlik': 0.20, 'giris_fiyati': 1.201487},
-    'GHH': {'ad': 'Sürdürülebilirlik Hisse Senedi Emeklilik Yatırım Fonu', 'agirlik': 0.10, 'giris_fiyati': 0.395887}
+    'GEL': {'ad': 'Para Piyasasi Emeklilik Yatirim Fonu', 'agirlik': 0.20, 'giris_fiyati': 0.436406},
+    'GEH': {'ad': 'Hisse Senedi Emeklilik Yatirim Fonu', 'agirlik': 0.30, 'giris_fiyati': 2.779911},
+    'EMY': {'ad': 'Altin Emeklilik Yatirim Fonu', 'agirlik': 0.20, 'giris_fiyati': 0.009987},
+    'GHG': {'ad': 'Dis Borclanma Araclari Emeklilik Yatirim Fonu', 'agirlik': 0.20, 'giris_fiyati': 1.201487},
+    'GHH': {'ad': 'Surdurulebilirlik Hisse Senedi Emeklilik Yatirim Fonu', 'agirlik': 0.10, 'giris_fiyati': 0.395887}
 }
 
 tarih_str = datetime.now().strftime('%Y-%m-%d')
@@ -50,14 +47,15 @@ for kod, info in fon_tanimlari.items():
     toplam_portfoye_katki += fon_portfoye_katki
     
     rapor_data.append([
-        kod, info['ad'], float(info['agirlik'] * 100), fon_maliyeti,
-        giris_fiy, guncel_fiy, toplam_degisim_orani, fon_portfoye_katki, fon_net_kar_zarar
+        kod, info['ad'], float(info['agirlik'] * 100), round(fon_maliyeti, 3),
+        round(giris_fiy, 3), round(guncel_fiy, 3), round(toplam_degisim_orani, 3), 
+        round(fon_portfoye_katki, 3), round(fon_net_kar_zarar, 3)
     ])
 
 sutunlar = [
-    'Fon Kodu', 'Fon Adı', 'Ağırlık (%)', 'Yatırılan Tutar (TL)', 
-    'Giriş Fiyatı (TL)', 'Güncel Fiyat (TL)', 'Toplam Değişim (%)', 
-    'Portföye Katkı (%)', 'Net Kâr/Zarar (TL)'
+    'Fon Kodu', 'Fon Adi', 'Agirlik (%)', 'Yatiriland Tutar (TL)', 
+    'Giris Fiyati (TL)', 'Guncel Fiyat (TL)', 'Toplam Degisim (%)', 
+    'Portfoye Katki (%)', 'Net Kar/Zarar (TL)'
 ]
 df = pd.DataFrame(rapor_data, columns=sutunlar)
 
@@ -65,67 +63,27 @@ genel_kar = float(toplam_guncel_deger - toplam_maliyet)
 dogru_genel_degisim = float((genel_kar / toplam_maliyet) * 100)
 
 toplam_satiri = pd.DataFrame([[
-    'TOPLAM', 'Genel Portföy Durumu', 100.0, toplam_maliyet,
-    0.0, 0.0, dogru_genel_degisim, toplam_portfoye_katki, genel_kar
+    'TOPLAM', 'Genel Portfoy Durumu', 100.0, round(toplam_maliyet, 3),
+    0.000, 0.000, round(dogru_genel_degisim, 3), round(toplam_portfoye_katki, 3), round(genel_kar, 3)
 ]], columns=sutunlar)
 
 df = pd.concat([df, toplam_satiri], ignore_index=True)
 
 excel_adi = f"BES_Raporu_{tarih_str}.xlsx"
 
-# EXCEL DOSYASI OLUŞTURMA VE KAYDETME ADIMI
-with pd.ExcelWriter(excel_adi, engine='openpyxl') as writer:
-    df.to_excel(writer, index=False, sheet_name='BES Takip')
-    workbook = writer.book
-    worksheet = writer.sheets['BES Takip']
-    
-    # 3 Basamak Formatı
-    for row in range(2, worksheet.max_row + 1):
-        for col in range(3, 10):
-            cell = worksheet.cell(row=row, column=col)
-            if cell.value is not None:
-                cell.number_format = '0.000'
+# BURASI ÇÖKMEYİ ENGELLEYEN EN SADE MOTOR AYARIDIR
+try:
+    df.to_excel(excel_adi, index=False)
+    print("Saf Excel dosyasi basariyla kaydedildi.")
+except Exception as e:
+    print(f"Excel kayit hatasi: {e}")
 
-    # Sütun Genişlik Ayarı
-    for col in worksheet.columns:
-        max_len = 0
-        col_letter = get_column_letter(col.column)
-        for cell in col:
-            if cell.value is not None:
-                val_str = f"{cell.value:.3f}" if isinstance(cell.value, float) else str(cell.value)
-                max_len = max(max_len, len(val_str))
-        worksheet.column_dimensions[col_letter].width = max(max_len + 3, 12)
-
-    # Grafik Çizimi
-    try:
-        chart_bar = BarChart()
-        chart_bar.type = "col"
-        chart_bar.style = 11
-        chart_bar.title = "Fon Bazlı Net Kâr / Zarar Detayı (TL)"
-        chart_bar.width = 16   
-        chart_bar.height = 10  
-        
-        data_bar = Reference(worksheet, min_col=9, min_row=1, max_row=6)
-        cats_bar = Reference(worksheet, min_col=1, min_row=2, max_row=6)
-        
-        chart_bar.add_data(data_bar, titles_from_data=True)
-        chart_bar.set_categories(cats_bar)
-        chart_bar.legend = None 
-        worksheet.add_chart(chart_bar, "A9")
-    except Exception as e:
-        print(f"Grafik uyarisi: {e}")
-
-print("MÜJDE: Excel dosyasi sistemde basariyla uretildi ve kayit altina alindi.")
-
-# KORUMALI E-POSTA MOTORU (Hata verse bile sistemi çökertmez)
-print("E-posta gönderim denemesi baslatiliyor...")
+# KORUMALI E-POSTA MOTORU
 try:
     mail_user = os.environ.get('MAIL_USER')
     mail_pass = os.environ.get('MAIL_PASS')
 
-    if not mail_user or not mail_pass:
-        print("UYARI: GitHub Secrets (MAIL_USER veya MAIL_PASS) boş veya okunamadi. Lütfen gizli kasa ayarlarini kontrol edin.")
-    else:
+    if mail_user and mail_pass:
         msg = MIMEMultipart()
         msg['From'] = mail_user
         msg['To'] = mail_user
@@ -138,11 +96,10 @@ try:
             part.add_header("Content-Disposition", f"attachment; filename= {excel_adi}")
             msg.attach(part)
 
-        server = smtplib.SMTP_SSL('://gmail.com', 465, timeout=10)
+        server = smtplib.SMTP_SSL('://gmail.com', 465)
         server.login(mail_user, mail_pass)
         server.sendmail(mail_user, mail_user, msg.as_string())
         server.quit()
-        print("BAŞARI: E-posta adresinize rapor gönderildi.")
+        print("E-posta kutunuza basariyla gönderildi.")
 except Exception as e:
-    print(f"E-POSTA GÖNDERİMİ BAŞARISIZ OLDU. Hata Kodu: {e}")
-    print("Not: Bu hata raporun olusmasini engellemez. Excel dosyaniz yukarıda yuklenmistir.")
+    print(f"E-posta adimi atlatildi: {e}")
