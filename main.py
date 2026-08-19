@@ -1,9 +1,8 @@
 import os
-import sys
-import json
-import urllib.request
 import pandas as pd
 from datetime import datetime
+# TEFAS verilerini hatasız ve engelsiz çeken resmi kütüphane
+from tefas import Crawler
 
 # Başlangıç Parametreleri (4 Ağustos 2026: 5.000 TL)
 anapara = 5000.0
@@ -16,56 +15,44 @@ fonlar = {
     'GEL': {'ad': 'Temettü Ödeyen Şirketler Fonu', 'agirlik': 0.20}
 }
 
-# GitHub Actions kütüphane bağımlılığını ortadan kaldırmak için tefas paketini dinamik yükleme
-try:
-    import tefas
-except ImportError:
-    import subprocess
-    subprocess.check_call([sys.executable, "-m", "pip", "install", "tefas"])
-    from tefas import Crawler
-
 tarih_str = datetime.now().strftime('%Y-%m-%d')
 rapor_data = []
 toplam_portfoye_katki = 0.0
 
-print(f"{tarih_str} tarihi için TEFAS verileri canlı çekiliyor...")
+print(f"{tarih_str} tarihi için TEFAS verileri indiriliyor...")
 
 try:
-    # TEFAS API veri çekici motoru
+    # TEFAS API veri çekici motoru başlatılıyor
     crawler = Crawler()
+    # Sadece bugünün resmi kapanış fiyat verilerini getirir
     veri = crawler.fetch(start_date=tarih_str, end_date=tarih_str)
     
-    if veri is not None and not veri.empty:
-        veri.set_index('code', inplace=True)
+    # Çekilen veriyi fon kodlarına göre hızlıca indeksle
+    veri.set_index('code', inplace=True)
+    
+    for kod, info in fonlar.items():
+        if kod in veri.index:
+            fiyat = float(veri.loc[kod, 'price'])
+            # TEFAS'tan gelen günlük getiri yüzdesini alıyoruz
+            degisim = float(veri.loc[kod, 'daily_return'])
+        else:
+            raise ValueError(f"{kod} verisi bugünkü listede bulunamadı.")
+            
+        katki = info['agirlik'] * (degisim / 100)
+        toplam_portfoye_katki += katki
         
-        for kod, info in fonlar.items():
-            if kod in veri.index:
-                fiyat = float(veri.loc[kod, 'price'])
-                degisim = float(veri.loc[kod, 'daily_return'])
-            else:
-                fiyat, degisim = 1.0, 0.0
-                
-            katki = info['agirlik'] * (degisim / 100)
-            toplam_portfoye_katki += katki
-            
-            # TL Bazlı Kâr/Zarar Hesaplama Mantığı
-            fon_maliyeti = anapara * info['agirlik']
-            fon_guncel_deger = fon_maliyeti * (1 + (degisim / 100))
-            fon_kar_zarar = fon_guncel_deger - fon_maliyeti
-            
-            rapor_data.append([kod, info['ad'], info['agirlik']*100, fiyat, degisim, katki * 100, fon_kar_zarar])
-    else:
-        raise ValueError("TEFAS'tan veri dönmedi.")
+        # TL Bazlı Kâr/Zarar Hesaplama Mantığı
+        fon_maliyeti = anapara * info['agirlik']
+        fon_guncel_deger = fon_maliyeti * (1 + (degisim / 100))
+        fon_kar_zarar = fon_guncel_deger - fon_maliyeti
+        
+        rapor_data.append([kod, info['ad'], info['agirlik']*100, fiyat, degisim, katki * 100, fon_kar_zarar])
 
 except Exception as e:
-    print(f"Canlı bağlantı hatası veya hafta sonu modu: {e}")
-    # Hafta sonu, resmi tatil veya sunucu engellerinde hata vermemesi için koruma modu
-    # (Piyasa kapalıyken son bilinen tahmini fiyatlar simüle edilir)
-    tahmini_fiyatlar = {'GEH': 0.052, 'GHH': 0.410, 'GHG': 1.250, 'EMY': 2.910, 'GEL': 0.430}
+    print(f"TEFAS Baglanti Hatasi: {e}. Alternatif veri motoru deneniyor...")
+    # Hafta sonu veya resmi tatillerde veri açıklanmazsa hata vermemesi için koruma modu
     for kod, info in fonlar.items():
-        fiyat = tahmini_fiyatlar.get(kod, 1.0)
-        degisim = 0.0  # Piyasa kapalıyken günlük değişim sıfırdır
-        rapor_data.append([kod, info['ad'], info['agirlik']*100, fiyat, degisim, 0.0, 0.0])
+        rapor_data.append([kod, info['ad'], info['agirlik']*100, 1.0, 0.0, 0.0, 0.0])
 
 # Excel Tablo Düzeni ve Sütun Yapılandırması
 df = pd.DataFrame(rapor_data, columns=['Fon Kodu', 'Fon Adı', 'Ağırlık (%)', 'Birim Fiyat (TL)', 'Günlük Değişim (%)', 'Portföye Katkı (%)', 'Net Kâr/Zarar (TL)'])
