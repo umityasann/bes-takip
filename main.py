@@ -7,7 +7,6 @@ import pandas as pd
 from datetime import datetime
 import openpyxl
 from openpyxl.chart import BarChart, Reference
-from openpyxl.chart.label import DataLabelList
 from openpyxl.utils import get_column_letter
 
 # ==============================================================================
@@ -67,7 +66,7 @@ dogru_genel_degisim = float((genel_kar / toplam_maliyet) * 100)
 
 toplam_satiri = pd.DataFrame([[
     'TOPLAM', 'Genel Portföy Durumu', 100.0, toplam_maliyet,
-    None, None, dogru_genel_degisim, toplam_portfoye_katki, genel_kar
+    0.0, 0.0, dogru_genel_degisim, toplam_portfoye_katki, genel_kar
 ]], columns=sutunlar)
 
 df = pd.concat([df, toplam_satiri], ignore_index=True)
@@ -79,7 +78,7 @@ with pd.ExcelWriter(excel_adi, engine='openpyxl') as writer:
     workbook = writer.book
     worksheet = writer.sheets['BES Takip']
     
-    # Formatlama
+    # 3 Basamak Biçimlendirme
     for row in range(2, worksheet.max_row + 1):
         for col in range(3, 10):
             cell = worksheet.cell(row=row, column=col)
@@ -91,41 +90,45 @@ with pd.ExcelWriter(excel_adi, engine='openpyxl') as writer:
         max_len = 0
         col_letter = get_column_letter(col.column)
         for cell in col:
-            if cell.value:
+            if cell.value is not None:
                 val_str = f"{cell.value:.3f}" if isinstance(cell.value, float) else str(cell.value)
                 max_len = max(max_len, len(val_str))
         worksheet.column_dimensions[col_letter].width = max(max_len + 3, 12)
 
-    # Grafik Entegrasyonu
-    chart_bar = BarChart()
-    chart_bar.type = "col"
-    chart_bar.style = 11
-    chart_bar.title = "Fon Bazlı Net Kâr / Zarar Detayı (TL)"
-    chart_bar.width = 18   
-    chart_bar.height = 10  
-    data_bar = Reference(worksheet, min_col=9, min_row=1, max_row=6)
-    cats_bar = Reference(worksheet, min_col=1, min_row=2, max_row=6)
-    chart_bar.add_data(data_bar, titles_from_data=True)
-    chart_bar.set_categories(cats_bar)
-    chart_bar.legend = None 
-    chart_bar.dataLabels = DataLabelList()
-    chart_bar.dataLabels.showVal = True
-    worksheet.add_chart(chart_bar, "A9")
+    # Hata Vermeyen Güvenli Grafik Motoru
+    try:
+        chart_bar = BarChart()
+        chart_bar.type = "col"
+        chart_bar.style = 11
+        chart_bar.title = "Fon Bazlı Net Kâr / Zarar Detayı (TL)"
+        chart_bar.width = 16   
+        chart_bar.height = 10  
+        
+        # Sadece gerçek fon satırlarını kapsar (2. satırdan 6. satıra kadar)
+        data_bar = Reference(worksheet, min_col=9, min_row=1, max_row=6)
+        cats_bar = Reference(worksheet, min_col=1, min_row=2, max_row=6)
+        
+        chart_bar.add_data(data_bar, titles_from_data=True)
+        chart_bar.set_categories(cats_bar)
+        chart_bar.legend = None 
+        
+        worksheet.add_chart(chart_bar, "A9")
+    except Exception as e:
+        print(f"Grafik cizim atlatildi: {e}")
 
-print("Excel başarıyla oluşturuldu. E-posta gönderimi başlatılıyor...")
+print("Excel basariyla olusturuldu. Mail gonderimi baslatiliyor...")
 
-# INTERNAL PYTHON MAIL SENDER ENGINE
+# MAIL MOTORU
 try:
     mail_user = os.environ.get('MAIL_USER')
     mail_pass = os.environ.get('MAIL_PASS')
 
     if mail_user and mail_pass:
         msg = MIMEMultipart()
-        msg['From'] = f"BES Otomasyon Sistemi <{mail_user}>"
+        msg['From'] = mail_user
         msg['To'] = mail_user
-        msg['Subject'] = f"Günlük Otomatik BES Durum Raporu - {tarih_str}"
+        msg['Subject'] = f"Gunluk Otomatik BES Durum Raporu - {tarih_str}"
 
-        # Dosya Eki
         with open(excel_adi, "rb") as attachment:
             part = MIMEBase("application", "octet-stream")
             part.set_payload(attachment.read())
@@ -133,13 +136,12 @@ try:
             part.add_header("Content-Disposition", f"attachment; filename= {excel_adi}")
             msg.attach(part)
 
-        # SMTP Bağlantısı
-        server = smtplib.SMTP_SSL('smtp.gmail.com', 465)
+        server = smtplib.SMTP_SSL('://gmail.com', 465)
         server.login(mail_user, mail_pass)
         server.sendmail(mail_user, mail_user, msg.as_string())
         server.quit()
-        print("E-posta başarıyla kutunuza gönderildi.")
+        print("E-posta basariyla gonderildi.")
     else:
-        print("Hata: Gizli kasadaki (Secrets) mail kullanıcı bilgileri okunamadı.")
+        print("Hata: Secrets verileri okunamadi.")
 except Exception as e:
-    print(f"E-posta Gönderim Hatası: {e}")
+    print(f"Mail Hatasi: {e}")
