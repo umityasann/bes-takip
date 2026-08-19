@@ -73,12 +73,13 @@ df = pd.concat([df, toplam_satiri], ignore_index=True)
 
 excel_adi = f"BES_Raporu_{tarih_str}.xlsx"
 
+# EXCEL DOSYASI OLUŞTURMA VE KAYDETME ADIMI
 with pd.ExcelWriter(excel_adi, engine='openpyxl') as writer:
     df.to_excel(writer, index=False, sheet_name='BES Takip')
     workbook = writer.book
     worksheet = writer.sheets['BES Takip']
     
-    # 3 Basamak Biçimlendirme
+    # 3 Basamak Formatı
     for row in range(2, worksheet.max_row + 1):
         for col in range(3, 10):
             cell = worksheet.cell(row=row, column=col)
@@ -95,7 +96,7 @@ with pd.ExcelWriter(excel_adi, engine='openpyxl') as writer:
                 max_len = max(max_len, len(val_str))
         worksheet.column_dimensions[col_letter].width = max(max_len + 3, 12)
 
-    # Hata Vermeyen Güvenli Grafik Motoru
+    # Grafik Çizimi
     try:
         chart_bar = BarChart()
         chart_bar.type = "col"
@@ -104,26 +105,27 @@ with pd.ExcelWriter(excel_adi, engine='openpyxl') as writer:
         chart_bar.width = 16   
         chart_bar.height = 10  
         
-        # Sadece gerçek fon satırlarını kapsar (2. satırdan 6. satıra kadar)
         data_bar = Reference(worksheet, min_col=9, min_row=1, max_row=6)
         cats_bar = Reference(worksheet, min_col=1, min_row=2, max_row=6)
         
         chart_bar.add_data(data_bar, titles_from_data=True)
         chart_bar.set_categories(cats_bar)
         chart_bar.legend = None 
-        
         worksheet.add_chart(chart_bar, "A9")
     except Exception as e:
-        print(f"Grafik cizim atlatildi: {e}")
+        print(f"Grafik uyarisi: {e}")
 
-print("Excel basariyla olusturuldu. Mail gonderimi baslatiliyor...")
+print("MÜJDE: Excel dosyasi sistemde basariyla uretildi ve kayit altina alindi.")
 
-# MAIL MOTORU
+# KORUMALI E-POSTA MOTORU (Hata verse bile sistemi çökertmez)
+print("E-posta gönderim denemesi baslatiliyor...")
 try:
     mail_user = os.environ.get('MAIL_USER')
     mail_pass = os.environ.get('MAIL_PASS')
 
-    if mail_user and mail_pass:
+    if not mail_user or not mail_pass:
+        print("UYARI: GitHub Secrets (MAIL_USER veya MAIL_PASS) boş veya okunamadi. Lütfen gizli kasa ayarlarini kontrol edin.")
+    else:
         msg = MIMEMultipart()
         msg['From'] = mail_user
         msg['To'] = mail_user
@@ -136,12 +138,11 @@ try:
             part.add_header("Content-Disposition", f"attachment; filename= {excel_adi}")
             msg.attach(part)
 
-        server = smtplib.SMTP_SSL('://gmail.com', 465)
+        server = smtplib.SMTP_SSL('://gmail.com', 465, timeout=10)
         server.login(mail_user, mail_pass)
         server.sendmail(mail_user, mail_user, msg.as_string())
         server.quit()
-        print("E-posta basariyla gonderildi.")
-    else:
-        print("Hata: Secrets verileri okunamadi.")
+        print("BAŞARI: E-posta adresinize rapor gönderildi.")
 except Exception as e:
-    print(f"Mail Hatasi: {e}")
+    print(f"E-POSTA GÖNDERİMİ BAŞARISIZ OLDU. Hata Kodu: {e}")
+    print("Not: Bu hata raporun olusmasini engellemez. Excel dosyaniz yukarıda yuklenmistir.")
