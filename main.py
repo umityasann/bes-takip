@@ -55,7 +55,7 @@ for kod, info in fon_tanimlari.items():
     values_js.append(f"{fon_net_kar_zarar:.2f}")
     
     renk = "green" if fon_net_kar_zarar >= 0 else "red"
-    arti_eksi = "+" if font_net_kar_zarar >= 0 else ""
+    arti_eksi = "+" if fon_net_kar_zarar >= 0 else ""
     
     rapor_data.append(f"""
     <tr>
@@ -164,4 +164,4 @@ html_icerik = f"""
 os.makedirs("public", exist_ok=True)
 with open("public/index.html", "w", encoding="utf-8") as f:
     f.write(html_icerik)
-print("Sonsuz döngülü otomatik web paneli başarıyla yüklendi.")
+print("Hatasiz otomatik web paneli basariyla yuklendi.")
