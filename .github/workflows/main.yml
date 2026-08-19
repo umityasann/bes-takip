@@ -17,10 +17,10 @@ jobs:
       with:
         python-version: '3.10'
 
-    - name: Temel Kutuphaneleri Yukle
+    - name: Standart Kutuphaneleri Yukle
       run: |
         python -m pip install --upgrade pip
-        pip install pandas openpyxl requests tefas tefas-crawler
+        pip install pandas openpyxl
 
     - name: Raporu Calistir
       run: python main.py
