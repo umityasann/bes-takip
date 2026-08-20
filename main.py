@@ -3,11 +3,18 @@ import ssl
 import json
 import html
 import urllib.request
+import urllib.parse
 import statistics
 from datetime import datetime, timedelta
 
 import pandas as pd
 from pytefas import Crawler, TefasAPIError, TefasRateLimitError
+from reportlab.lib import colors
+from reportlab.lib.pagesizes import A4
+from reportlab.lib.units import mm
+from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.enums import TA_LEFT, TA_CENTER
 
 # ==============================================================================
 # AYARLAR
@@ -16,9 +23,10 @@ aylik_odeme = 5000.0
 baslangic_tarihi = datetime(2026, 8, 5)
 bugun = datetime.now()
 
-# Manuel güncellenen aylık TÜFE varsayımı — güvenilir otomatik kaynak bulunana
-# kadar bilinçli olarak sabit bırakıldı (TCMB EVDS API key gerektirir).
-AYLIK_ENFLASYON_VARSAYIMI = 3.0  # % — TÜİK açıklamasına göre elle güncelleyin
+# Manuel varsayım — TCMB_API_KEY tanımlı değilse veya erişim başarısız olursa
+# bu sabit değer kullanılır (yedek). Aksi halde aşağıdaki fonksiyon gerçek
+# TÜFE'yi otomatik çeker ve bu değerin yerini alır.
+AYLIK_ENFLASYON_VARSAYIMI = 3.0  # % — sadece TCMB erişilemezse kullanılır
 
 # Uyarı eşiği: toplam değişim bu yüzdeyi (mutlak) aşarsa webhook'a bildirim gider.
 BILDIRIM_ESIK = 5.0
@@ -26,7 +34,9 @@ BILDIRIM_ESIK = 5.0
 # Hassas değerler koda YAZILMAZ — GitHub Actions Secrets üzerinden okunur.
 # Repo Settings > Secrets and variables > Actions altından tanımlayın:
 #   ALERT_WEBHOOK_URL  -> Telegram/Slack webhook (opsiyonel)
+#   TCMB_API_KEY       -> evds2.tcmb.gov.tr'den ücretsiz alınan EVDS API anahtarı (opsiyonel)
 WEBHOOK_URL = os.environ.get("ALERT_WEBHOOK_URL", "").strip()
+TCMB_API_KEY = os.environ.get("TCMB_API_KEY", "").strip()
 
 MAX_RESPONSE_BYTES = 200_000  # kötü niyetli/aşırı büyük yanıta karşı üst sınır
 REQUEST_TIMEOUT = 5
@@ -138,6 +148,7 @@ gecmis = gecmisi_yukle(HISTORY_PATH)
 # ------------------------------------------------------------------------------
 rapor_data = []
 grafik_cubuklari_html = []
+fon_kayitlari = []  # CSV + PDF için ortak, tek seferde hesaplanmış veri
 renkler = ['#3b82f6', '#10b981', '#f59e0b', '#ec4899', '#8b5cf6']
 
 toplam_maliyet = 0.0
@@ -160,6 +171,13 @@ for idx, (kod, info) in enumerate(fon_tanimlari.items()):
 
     toplam_maliyet += fon_maliyeti
     toplam_guncel_deger += fon_guncel_degeri
+
+    fon_kayitlari.append({
+        "kod": kod, "ad": info['ad'], "agirlik": info['agirlik'] * 100,
+        "maliyet": fon_maliyeti, "giris": giris_fiy, "guncel": guncel_fiy,
+        "degisim": toplam_degisim_orani, "kar": fon_net_kar_zarar,
+        "kaynak": "Canlı" if kod in piyasa_havuzu and piyasa_havuzu[kod] > 0 else "Yedek",
+    })
 
     renk = "green" if fon_net_kar_zarar >= 0 else "red"
     arti_eksi = "+" if fon_net_kar_zarar >= 0 else ""
@@ -227,9 +245,67 @@ if len(gecmis) >= 2:
     drawdown_html = f"%{maks_dusus:.2f}"
 
 # ------------------------------------------------------------------------------
-# ENFLASYON KARŞILAŞTIRMA (manuel varsayımla)
+# ENFLASYON KARŞILAŞTIRMA — TCMB EVDS resmi API'si (TP.FG.J0, TÜFE Genel Endeks)
 # ------------------------------------------------------------------------------
-tahmini_enflasyon = AYLIK_ENFLASYON_VARSAYIMI * ay_sayisi
+def tufe_kumulatif_getir(api_key: str, baslangic: datetime, bitis: datetime):
+    """TCMB EVDS'den TÜFE genel endeksini (TP.FG.J0) aylık düzeyde çeker,
+    dönem başı ve son yayınlanan ay arasındaki gerçek kümülatif % değişimi
+    döner. Hata/anahtar yoksa None döner -> çağıran taraf manuel varsayıma düşer."""
+    if not api_key:
+        return None
+    try:
+        params = urllib.parse.urlencode({
+            "series": "TP.FG.J0",
+            "startDate": baslangic.strftime("%d-%m-%Y"),
+            "endDate": bitis.strftime("%d-%m-%Y"),
+            "frequency": "5",  # aylık
+            "type": "json",
+        })
+        url = f"https://evds2.tcmb.gov.tr/service/evds/{params}"
+        req = urllib.request.Request(url, headers={"key": api_key})
+        ctx = ssl.create_default_context()
+        with urllib.request.urlopen(req, timeout=REQUEST_TIMEOUT * 2, context=ctx) as resp:
+            raw = resp.read(MAX_RESPONSE_BYTES + 1)
+            if len(raw) > MAX_RESPONSE_BYTES:
+                print("TCMB EVDS: yanıt boyut sınırını aştı, reddedildi.")
+                return None
+            data = json.loads(raw.decode("utf-8"))
+
+        items = data.get("items", [])
+        if not items:
+            return None
+
+        degerler = []
+        for item in items:
+            v = item.get("TP_FG_J0")
+            if v is None:
+                continue
+            try:
+                degerler.append(float(v))
+            except (TypeError, ValueError):
+                continue
+
+        if len(degerler) < 2:
+            return None
+
+        ilk, son = degerler[0], degerler[-1]
+        if ilk <= 0:
+            return None
+        return (son - ilk) / ilk * 100
+    except Exception as e:
+        print(f"TCMB EVDS erişilemedi, manuel TÜFE varsayımına geçildi: {e}")
+        return None
+
+
+tahmini_enflasyon = tufe_kumulatif_getir(TCMB_API_KEY, baslangic_tarihi, bugun)
+if tahmini_enflasyon is not None:
+    enflasyon_kaynagi = "TCMB EVDS (gerçek, kümülatif)"
+    print(f"TÜFE otomatik çekildi: %{tahmini_enflasyon:.2f} (dönem toplamı)")
+else:
+    tahmini_enflasyon = AYLIK_ENFLASYON_VARSAYIMI * ay_sayisi
+    enflasyon_kaynagi = "manuel varsayım"
+    print("TÜFE otomatik çekilemedi, manuel varsayım kullanıldı.")
+
 enflasyon_farki = dogru_genel_degisim - tahmini_enflasyon
 enf_renk = "#059669" if enflasyon_farki >= 0 else "#dc2626"
 enf_yon = "üzerinde" if enflasyon_farki >= 0 else "altında"
@@ -292,22 +368,109 @@ for i in range(ay_sayisi):
 katki_html = "".join(katki_chips)
 
 # ------------------------------------------------------------------------------
-# CSV EXPORT (pandas ile)
+# CSV EXPORT — Türkçe Excel uyumlu (virgül hem ondalık hem ayraç çakışması
+# nedeniyle "sep=," direktifiyle Excel'e doğru ayraç bildiriliyor)
 # ------------------------------------------------------------------------------
-csv_rows = []
-for kod, info in fon_tanimlari.items():
-    giris_fiy = float(info['giris_fiyati'])
-    guncel_fiy = piyasa_havuzu.get(kod) or YEDEK_FIYATLAR.get(kod, giris_fiy)
-    degisim = ((guncel_fiy - giris_fiy) / giris_fiy) * 100
-    maliyet = toplam_anapara * info['agirlik']
-    kar = maliyet * (degisim / 100)
-    csv_rows.append({
-        "Fon Kodu": kod, "Fon Adı": info['ad'], "Ağırlık(%)": info['agirlik'] * 100,
-        "Maliyet(TL)": round(maliyet, 2), "Giriş Fiyatı": giris_fiy, "Güncel Fiyat": guncel_fiy,
-        "Değişim(%)": round(degisim, 2), "Net Kâr/Zarar(TL)": round(kar, 2),
-    })
 os.makedirs("public", exist_ok=True)
-pd.DataFrame(csv_rows).to_csv("public/portfoy_raporu.csv", index=False, encoding="utf-8-sig")
+csv_df = pd.DataFrame([{
+    "Fon Kodu": r["kod"], "Fon Adı": r["ad"], "Ağırlık(%)": round(r["agirlik"], 1),
+    "Maliyet(TL)": round(r["maliyet"], 2), "Giriş Fiyatı": round(r["giris"], 6),
+    "Güncel Fiyat": round(r["guncel"], 6), "Değişim(%)": round(r["degisim"], 2),
+    "Net Kâr/Zarar(TL)": round(r["kar"], 2), "Kaynak": r["kaynak"],
+} for r in fon_kayitlari])
+with open("public/portfoy_raporu.csv", "w", encoding="utf-8-sig", newline="") as f:
+    f.write("sep=,\n")
+    csv_df.to_csv(f, index=False)
+
+# ------------------------------------------------------------------------------
+# PDF EXPORT — reportlab (saf Python, sistem kütüphanesi gerekmez),
+# sitedeki tabloyla aynı veri ve renk şeması
+# ------------------------------------------------------------------------------
+def pdf_raporu_uret(yol: str):
+    doc = SimpleDocTemplate(
+        yol, pagesize=A4,
+        leftMargin=18 * mm, rightMargin=18 * mm, topMargin=16 * mm, bottomMargin=16 * mm,
+    )
+    styles = getSampleStyleSheet()
+    baslik_stili = ParagraphStyle("Baslik", parent=styles["Title"], fontSize=17,
+                                   textColor=colors.HexColor("#0f172a"), spaceAfter=2)
+    alt_baslik_stili = ParagraphStyle("AltBaslik", parent=styles["Normal"], fontSize=9.5,
+                                       textColor=colors.HexColor("#64748b"), spaceAfter=14)
+    bolum_stili = ParagraphStyle("Bolum", parent=styles["Heading2"], fontSize=12,
+                                  textColor=colors.HexColor("#1e293b"), spaceBefore=14, spaceAfter=6)
+
+    story = [
+        Paragraph("Garanti BES Portföy Takip Raporu", baslik_stili),
+        Paragraph(f"Oluşturulma: {tarih_str} - {bugun.strftime('%H:%M')}", alt_baslik_stili),
+    ]
+
+    # Özet kutuları
+    ozet_veri = [
+        ["Yatırılan Anapara", "Net Kâr", "Portföy Büyümesi", "Enflasyona Göre"],
+        [f"{toplam_maliyet:.2f} TL", f"+{genel_kar:.2f} TL",
+         f"+%{dogru_genel_degisim:.2f}", f"%{enflasyon_farki:+.2f} {enf_yon}"],
+    ]
+    ozet_tablo = Table(ozet_veri, colWidths=[42 * mm] * 4)
+    ozet_tablo.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#f1f5f9")),
+        ("BACKGROUND", (0, 1), (-1, 1), colors.HexColor("#f8fafc")),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.HexColor("#64748b")),
+        ("TEXTCOLOR", (1, 1), (1, 1), colors.HexColor("#166534")),
+        ("FONTSIZE", (0, 0), (-1, 0), 8),
+        ("FONTSIZE", (0, 1), (-1, 1), 12),
+        ("FONTNAME", (0, 1), (-1, 1), "Helvetica-Bold"),
+        ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("TOPPADDING", (0, 0), (-1, -1), 8),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
+        ("BOX", (0, 0), (-1, -1), 0.5, colors.HexColor("#e2e8f0")),
+        ("INNERGRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#e2e8f0")),
+    ]))
+    story.append(ozet_tablo)
+    story.append(Paragraph(f"Dönem: {ay_sayisi}. Ay &nbsp;·&nbsp; Kaynak: {enflasyon_kaynagi}", alt_baslik_stili))
+
+    # Fon tablosu
+    story.append(Paragraph("Fon Bazlı Detay", bolum_stili))
+    tablo_basliklari = ["Kod", "Ağırlık", "Maliyet", "Giriş", "Güncel", "Değişim", "Kâr/Zarar", "Kaynak"]
+    tablo_satirlari = [tablo_basliklari]
+    for r in fon_kayitlari:
+        tablo_satirlari.append([
+            r["kod"], f"%{r['agirlik']:.1f}", f"{r['maliyet']:.2f} TL",
+            f"{r['giris']:.6f}", f"{r['guncel']:.6f}", f"%{r['degisim']:+.2f}",
+            f"{r['kar']:+.2f} TL", r["kaynak"],
+        ])
+
+    fon_tablo = Table(tablo_satirlari, colWidths=[16 * mm, 16 * mm, 22 * mm, 24 * mm, 24 * mm, 20 * mm, 24 * mm, 18 * mm])
+    tablo_stil = [
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1e293b")),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("FONTSIZE", (0, 0), (-1, -1), 8.5),
+        ("ALIGN", (1, 0), (-1, -1), "CENTER"),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("TOPPADDING", (0, 0), (-1, -1), 6),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+        ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#e2e8f0")),
+        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f8fafc")]),
+    ]
+    for i, r in enumerate(fon_kayitlari, start=1):
+        renk_hex = "#166534" if r["kar"] >= 0 else "#991b1b"
+        tablo_stil.append(("TEXTCOLOR", (6, i), (6, i), colors.HexColor(renk_hex)))
+        tablo_stil.append(("FONTNAME", (6, i), (6, i), "Helvetica-Bold"))
+    fon_tablo.setStyle(TableStyle(tablo_stil))
+    story.append(fon_tablo)
+
+    story.append(Spacer(1, 10))
+    story.append(Paragraph(
+        "Bu rapor otomatik oluşturulmuştur. Fiyatlar TEFAS resmi API'sinden (pytefas) alınır; "
+        "erişilemediğinde son bilinen yedek fiyatlar kullanılır (tabloda \"Yedek\" olarak işaretlenir).",
+        alt_baslik_stili,
+    ))
+
+    doc.build(story)
+
+
+pdf_raporu_uret("public/portfoy_raporu.pdf")
 
 # ------------------------------------------------------------------------------
 # UYARI WEBHOOK'U (opsiyonel, eşik aşılırsa)
@@ -348,7 +511,8 @@ html_icerik = f"""<!DOCTYPE html>
             <div>
                 <h1 style="margin:0; color:#0f172a; font-size:24px; font-weight:800; letter-spacing:-0.5px;">Garanti BES Portföy Takip Paneli</h1>
                 <p style="color:#64748b; font-size:14px; margin:5px 0 0 0;">Son Güncelleme: <strong>{tarih_str} - {bugun.strftime('%H:%M')}</strong> ·
-                <a href="portfoy_raporu.csv" style="color:#2563eb; text-decoration:none; font-weight:600;">⬇ CSV indir</a></p>
+                <a href="portfoy_raporu.pdf" style="color:#2563eb; text-decoration:none; font-weight:600;">⬇ PDF indir</a> ·
+                <a href="portfoy_raporu.csv" style="color:#64748b; text-decoration:none; font-weight:500; font-size:12px;">CSV</a></p>
             </div>
         </div>
 
@@ -369,7 +533,7 @@ html_icerik = f"""<!DOCTYPE html>
             <div style="background:#fefce8; padding:20px; border-radius:12px; border:1px solid #fef08a;">
                 <div style="font-size:13px; font-weight:600; color:#854d0e; text-transform:uppercase;">Enflasyona Göre (varsayım)</div>
                 <div style="font-size:22px; font-weight:800; color:{enf_renk}; margin-top:8px;">%{enflasyon_farki:+.2f} {enf_yon}</div>
-                <div style="font-size:11px; color:#a16207; margin-top:5px;">Aylık %{AYLIK_ENFLASYON_VARSAYIMI} varsayımla</div>
+                <div style="font-size:11px; color:#a16207; margin-top:5px;">{enflasyon_kaynagi}</div>
             </div>
         </div>
 
