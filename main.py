@@ -5,7 +5,6 @@ import html
 import urllib.request
 import urllib.parse
 import statistics
-import base64
 from datetime import datetime, timedelta
 
 import pandas as pd
