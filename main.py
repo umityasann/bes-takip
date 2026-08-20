@@ -40,7 +40,6 @@ fon_tanimlari = {
     'GHH': {'ad': 'Surdurulebilirlik Hisse Senedi Emeklilik Yatirim Fonu', 'agirlik': 0.10, 'giris_fiyati': 0.395887},
 }
 
-# Canlı resmi fiyatlar (Her ihtimale karşı 6 basamaklı yedek korumalı)
 YEDEK_FIYATLAR = {
     'GEL': 0.443463, 'GEH': 2.914848, 'EMY': 0.010793, 'GHG': 1.221447, 'GHH': 0.405183,
 }
@@ -48,9 +47,9 @@ YEDEK_FIYATLAR = {
 tarih_str = bugun.strftime('%d-%m-%Y')
 tarih_iso = bugun.strftime('%Y-%m-%d')
 
-# Kütüphane bağımlılığı olmadan doğrudan resmi API uç noktasından veri çekme
 piyasa_havuzu = {}
 try:
+    # URL üzerindeki boşluk hatası tamamen düzeltildi
     url = "https://devtunnels.ms"
     req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
     with urllib.request.urlopen(req, timeout=8) as response:
@@ -161,7 +160,7 @@ enf_yon = "Uzerinde" if enflasyon_farki >= 0 else "Altinda"
 enf_renk = "#059669" if enflasyon_farki >= 0 else "#dc2626"
 
 # ==============================================================================
-# REPORTLAB PDF GENERATOR (YAZI VE TÜRKÇE HARF STANDARDI)
+# REPORTLAB PDF GENERATOR
 # ==============================================================================
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.units import mm
