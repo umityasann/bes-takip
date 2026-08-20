@@ -4,9 +4,10 @@ import json
 import html
 import urllib.request
 import statistics
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import pandas as pd
+from pytefas import Crawler, TefasAPIError, TefasRateLimitError
 
 # ==============================================================================
 # AYARLAR
@@ -24,9 +25,7 @@ BILDIRIM_ESIK = 5.0
 
 # Hassas değerler koda YAZILMAZ — GitHub Actions Secrets üzerinden okunur.
 # Repo Settings > Secrets and variables > Actions altından tanımlayın:
-#   TEFAS_API_URL     -> doğrulanmış, güvendiğiniz bir fiyat API'si (opsiyonel)
 #   ALERT_WEBHOOK_URL  -> Telegram/Slack webhook (opsiyonel)
-TEFAS_API_URL = os.environ.get("TEFAS_API_URL", "").strip()
 WEBHOOK_URL = os.environ.get("ALERT_WEBHOOK_URL", "").strip()
 
 MAX_RESPONSE_BYTES = 200_000  # kötü niyetli/aşırı büyük yanıta karşı üst sınır
@@ -59,47 +58,58 @@ tarih_iso = bugun.strftime('%Y-%m-%d')
 
 
 # ------------------------------------------------------------------------------
-# GÜVENLİ VERİ ÇEKME
+# GERÇEK VERİ ÇEKME — TEFAS resmi API'si (pytefas)
 # ------------------------------------------------------------------------------
-def guvenli_piyasa_verisi_cek(url: str) -> dict:
-    """Doğrulanmış SSL bağlamıyla, boyut sınırlı, şema doğrulamalı istek.
-    Herhangi bir hata durumunda sessizce boş dict döner — çağıran taraf
-    fallback fiyatlara düşer, Action asla bu yüzden çökmez."""
-    if not url:
-        return {}
-    try:
-        ctx = ssl.create_default_context()  # sertifika doğrulaması açık
-        req = urllib.request.Request(url, headers={'User-Agent': 'bes-takip-bot/1.0'})
-        with urllib.request.urlopen(req, timeout=REQUEST_TIMEOUT, context=ctx) as resp:
-            raw = resp.read(MAX_RESPONSE_BYTES + 1)
-            if len(raw) > MAX_RESPONSE_BYTES:
-                print("Uyarı: yanıt boyut sınırını aştı, reddedildi.")
-                return {}
-            data = json.loads(raw.decode('utf-8'))
+FON_KODLARI = list(fon_tanimlari.keys())
 
-        if not isinstance(data, list):
-            print("Uyarı: beklenmeyen veri şeması (liste değil), reddedildi.")
-            return {}
+
+def tefas_fiyatlarini_cek(fon_kodlari: list, gun_sayisi_geriye: int = 7) -> dict:
+    """TEFAS'ın resmi API'sinden (tefas.gov.tr/api/funds/...) emeklilik
+    fonu (EMK) fiyatlarını çeker. Bugünden geriye doğru en fazla
+    `gun_sayisi_geriye` gün tarar — TEFAS hafta sonu/tatilde veri
+    yayınlamadığı için en son yayınlanan iş günü fiyatını bulur.
+    Herhangi bir hata durumunda boş dict döner; Action bu yüzden çökmez,
+    çağıran taraf YEDEK_FIYATLAR'a düşer."""
+    crawler = Crawler(timeout=REQUEST_TIMEOUT * 4, max_retry=3)
+
+    for gun_ofset in range(gun_sayisi_geriye):
+        tarih = (bugun - timedelta(days=gun_ofset)).strftime("%Y-%m-%d")
+        try:
+            df = crawler.fetch(tarih, columns="info", kind="EMK")
+        except (TefasAPIError, TefasRateLimitError) as e:
+            print(f"TEFAS API hatası ({tarih}): {e}")
+            continue
+        except Exception as e:
+            print(f"Beklenmeyen hata ({tarih}): {e}")
+            continue
+
+        if df is None or df.empty:
+            continue  # o gün veri yok (hafta sonu/tatil) -> bir önceki güne bak
+
+        df_filtreli = df[df["fund_code"].isin(fon_kodlari)]
+        if df_filtreli.empty:
+            continue
 
         havuz = {}
-        for item in data:
-            if not isinstance(item, dict):
-                continue
-            kod = item.get('kod')
-            fiyat = item.get('fiyat')
-            if not isinstance(kod, str):
-                continue
+        for _, row in df_filtreli.iterrows():
             try:
-                havuz[kod] = float(fiyat)
+                havuz[row["fund_code"]] = float(row["price"])
             except (TypeError, ValueError):
                 continue
-        return havuz
-    except Exception as e:
-        print(f"Canlı veri kaynağına erişilemedi, yedek fiyatlara geçildi: {e}")
-        return {}
+
+        if havuz:
+            print(f"TEFAS verisi bulundu: {tarih} ({len(havuz)}/{len(fon_kodlari)} fon)")
+            return havuz
+
+    print("Son 7 günde TEFAS verisi bulunamadı, yedek fiyatlara geçildi.")
+    return {}
 
 
-piyasa_havuzu = guvenli_piyasa_verisi_cek(TEFAS_API_URL)
+try:
+    piyasa_havuzu = tefas_fiyatlarini_cek(FON_KODLARI)
+except Exception as e:
+    print(f"TEFAS entegrasyonu tamamen başarısız oldu, yedek fiyatlara geçildi: {e}")
+    piyasa_havuzu = {}
 
 # ------------------------------------------------------------------------------
 # GEÇMİŞ VERİ (TARİHSEL GRAFİK + RİSK METRİKLERİ İÇİN)
