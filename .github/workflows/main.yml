@@ -2,57 +2,49 @@ name: Gunluk BES Raporu Otomasyonu
 
 on:
   schedule:
-    - cron: "30 16 * * *"
-  workflow_dispatch: {}
+    # Her gün Türkiye saatiyle 19:30'da otomatik çalışır (UTC 16:30)
+    - cron: '30 16 * * *'
+  workflow_dispatch: # Manuel çalıştırma butonu ekler
 
+# GitHub Pages'e doğrudan yükleme yapabilmek için gereken en yüksek sunucu izinleri
 permissions:
   contents: write
   pages: write
   id-token: write
 
+# Aynı anda birden fazla çalışma çakışırsa eskiyi iptal eder, hızı artırır
 concurrency:
   group: "pages"
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      - name: Depoyu Klonla
-        uses: actions/checkout@v4
+    - name: Depoyu Klonla
+      uses: actions/checkout@v3
 
-      - name: Python Kurulumu
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
+    - name: Python Kurulumu
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
 
-      - name: Kutuphaneleri Yukle
-        run: pip install -r requirements.txt
+    - name: Kutuphaneleri Yukle
+      run: |
+        python -m pip install --upgrade pip
+        pip install pandas reportlab
 
-      - name: Web Sayfasini Uret
-        env:
-          ALERT_WEBHOOK_URL: ${{ secrets.ALERT_WEBHOOK_URL }}
-        run: python main.py
+    - name: Web Sayfasini Uret
+      run: python main.py
 
-      - name: Gecmis Veriyi Commit Et
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add data/history.json
-          git diff --staged --quiet || git commit -m "Gunluk veri guncellendi $(date +'%Y-%m-%d')"
-          git push
+    - name: GitHub Pages Altyapisini Kur
+      uses: actions/configure-pages@v3
 
-      - name: Pages Ayarla
-        uses: actions/configure-pages@v5
+    - name: Sayfa Arsirini Yukle
+      uses: actions/upload-pages-artifact@v3
+      with:
+        path: 'public'
 
-      - name: Sayfa Arsivini Yukle
-        uses: actions/upload-pages-artifact@v3
-        with:
-          path: public
-
-      - name: Web Sitesini Canliya Al
-        id: deployment
-        uses: actions/deploy-pages@v4
+    - name: Web Sitesini Canliya Al (Garantili Motor)
+      id: deployment
+      uses: actions/deploy-pages@v4
