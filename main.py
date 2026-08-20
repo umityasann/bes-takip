@@ -15,7 +15,12 @@ from reportlab.lib.units import mm
 from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.enums import TA_LEFT, TA_CENTER
-from reportlab.graphics.shapes import Drawing, Rect, String, Group
+from reportlab.graphics.shapes import Drawing, Rect, String
+
+# ==============================================================================
+# HATA ÖNLEYİCİ: PUBLIC KLASÖRÜNÜ EN BAŞTA KESİN OLARAK OLUŞTURMA
+# ==============================================================================
+os.makedirs("public", exist_ok=True)
 
 # ==============================================================================
 # AYARLAR
@@ -108,7 +113,7 @@ def gecmisi_kaydet(path: str, gecmis: list):
 gecmis = gecmisi_yukle(HISTORY_PATH)
 
 # ==============================================================================
-# HESAPLAMA MOTORU
+# HESAPLAMA VE VERİ HAZIRLAMA
 # ==============================================================================
 rapor_data = []
 grafik_cubuklari_html = []
@@ -233,8 +238,3 @@ def svg_cizgi_grafik(gecmis: list, genislik=640, yukseklik=140) -> str:
     pad = 10
     n = len(degerler)
     noktalar = []
-    for i, v in enumerate(degerler):
-        x = pad + (i / (n - 1)) * (genislik - 2 * pad)
-        y = yukseklik - pad - ((v - min_v) / span) * (yukseklik - 2 * pad)
-        noktalar.append((round(x, 1), round(y, 1)))
-    cizgi = " ".join(f"{x},{y}" for x, y in noktalar)
