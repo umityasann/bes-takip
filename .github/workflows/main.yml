@@ -2,32 +2,54 @@ name: Gunluk BES Raporu Otomasyonu
 
 on:
   schedule:
-    - cron: '30 16 * * *'
-  workflow_dispatch:
+    - cron: "30 16 * * *"
+  workflow_dispatch: {}
 
 permissions:
   contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
 
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-    - name: Depoyu Klonla
-      uses: actions/checkout@v3
+      - name: Depoyu Klonla
+        uses: actions/checkout@v4
 
-    - name: Python Kurulumu
-      uses: actions/setup-python@v4
-      with:
-        python-version: '3.10'
+      - name: Python Kurulumu
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
 
-    - name: Kutuphaneleri Yukle
-      run: pip install pandas
+      - name: Kutuphaneleri Yukle
+        run: pip install -r requirements.txt
 
-    - name: Web Sayfasini Uret
-      run: python main.py
+      - name: Web Sayfasini Uret
+        env:
+          ALERT_WEBHOOK_URL: ${{ secrets.ALERT_WEBHOOK_URL }}
+        run: python main.py
 
-    - name: Web Sitesini Canliya Al (GitHub Pages)
-      uses: JamesIves/github-pages-deploy-action@v4
-      with:
-        folder: public
-        branch: gh-pages
+      - name: Gecmis Veriyi Commit Et
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add data/history.json
+          git diff --staged --quiet || git commit -m "Gunluk veri guncellendi $(date +'%Y-%m-%d')"
+          git push
+
+      - name: Pages Ayarla
+        uses: actions/configure-pages@v5
+
+      - name: Sayfa Arsivini Yukle
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: public
+
+      - name: Web Sitesini Canliya Al
+        id: deployment
+        uses: actions/deploy-pages@v4
