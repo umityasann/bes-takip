@@ -24,16 +24,22 @@ aylik_odeme = 5000.0
 baslangic_tarihi = datetime(2026, 8, 5)
 bugun = datetime.now()
 
+# Manuel varsayım — TCMB_API_KEY tanımlı değilse veya erişim başarısız olursa
+# bu sabit değer kullanılır (yedek). Aksi halde aşağıdaki fonksiyon gerçek
+# TÜFE'yi otomatik çeker ve bu değerin yerini alır.
 AYLIK_ENFLASYON_VARSAYIMI = 3.0  # % — sadece TCMB erişilemezse kullanılır
+
+# Uyarı eşiği: toplam değişim bu yüzdeyi (mutlak) aşarsa webhook'a bildirim gider.
 BILDIRIM_ESIK = 5.0
 
+# Hassas değerler koda YAZILMAZ — GitHub Actions Secrets üzerinden okunur.
 WEBHOOK_URL = os.environ.get("ALERT_WEBHOOK_URL", "").strip()
 TCMB_API_KEY = os.environ.get("TCMB_API_KEY", "").strip()
 
-MAX_RESPONSE_BYTES = 200_000  
+MAX_RESPONSE_BYTES = 200_000  # kötü niyetli/aşırı büyük yanıta karşı üst sınır
 REQUEST_TIMEOUT = 5
 
-HISTORY_PATH = "data/history.json"  
+HISTORY_PATH = "data/history.json"  # repo içinde kalıcı, workflow'da commit edilmeli
 
 ay_sayisi = (bugun.year - baslangic_tarihi.year) * 12 + (bugun.month - baslangic_tarihi.month) + 1
 if bugun.day < baslangic_tarihi.day and ay_sayisi > 1:
@@ -49,6 +55,7 @@ fon_tanimlari = {
     'GHH': {'ad': 'Sürdürülebilirlik Hisse Senedi Emeklilik Yatırım Fonu', 'agirlik': 0.10, 'giris_fiyati': 0.395887},
 }
 
+# Fallback fiyatları 6 ondalığa çıkarıldı
 YEDEK_FIYATLAR = {
     'GEL': 0.442970, 'GEH': 2.833800, 'EMY': 0.010863, 'GHG': 1.215962, 'GHH': 0.400294,
 }
@@ -62,7 +69,9 @@ tarih_iso = bugun.strftime('%Y-%m-%d')
 FON_KODLARI = list(fon_tanimlari.keys())
 
 def tefas_fiyatlarini_cek(fon_kodlari: list, gun_sayisi_geriye: int = 7) -> dict:
+    """TEFAS'ın resmi API'sinden emeklilik fonu fiyatlarını çeker."""
     crawler = Crawler(timeout=REQUEST_TIMEOUT * 4, max_retry=3)
+
     for gun_ofset in range(gun_sayisi_geriye):
         tarih = (bugun - timedelta(days=gun_ofset)).strftime("%Y-%m-%d")
         try:
@@ -102,7 +111,7 @@ except Exception as e:
     piyasa_havuzu = {}
 
 # ------------------------------------------------------------------------------
-# GEÇMİŞ VERİ YÜKLEME VE KAYDETME
+# GEÇMİŞ VERİ (TARİHSEL GRAFİK + RİSK METRİKLERİ İÇİN)
 # ------------------------------------------------------------------------------
 def gecmisi_yukle(path: str) -> list:
     if not os.path.exists(path):
@@ -219,18 +228,3 @@ if len(gecmis) >= 2:
     for v in degerler:
         zirve = max(zirve, v)
         dusus = (v - zirve) / zirve * 100 if zirve else 0
-        maks_dusus = min(maks_dusus, dusus)
-    drawdown_html = f"%{maks_dusus:.2f}"
-
-# ------------------------------------------------------------------------------
-# ENFLASYON HESAPLAMA
-# ------------------------------------------------------------------------------
-def tufe_kumulatif_getir(api_key: str, baslangic: datetime, bitis: datetime):
-    if not api_key:
-        return None
-    try:
-        params = urllib.parse.urlencode({
-            "series": "TP.FG.J0",
-            "startDate": baslangic.strftime("%d-%m-%Y"),
-            "endDate": bitis.strftime("%d-%m-%Y"),
-            "frequency": "5",  
