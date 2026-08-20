@@ -1,21 +1,41 @@
 import os
-import urllib.request
+import ssl
 import json
-import pandas as pd
+import html
+import urllib.request
+import statistics
 from datetime import datetime
 
+import pandas as pd
+
 # ==============================================================================
-# SİZİN BAŞLANGIÇ AYARLARINIZ (Otomatik Zaman Sayıcı Aktif)
+# AYARLAR
 # ==============================================================================
 aylik_odeme = 5000.0
-baslangic_tarihi = datetime(2026, 8, 5)  # İlk yatırım tarihi: 5 Ağustos 2026
+baslangic_tarihi = datetime(2026, 8, 5)
 bugun = datetime.now()
 
-# İki tarih arasındaki toplam ay farkını otomatik hesaplayan formül
-ay_sayisi = (bugun.year - baslangic_tarihi.year) * 12 + (bugun.month - baslangic_tarihi.month) + 1
+# Manuel güncellenen aylık TÜFE varsayımı — güvenilir otomatik kaynak bulunana
+# kadar bilinçli olarak sabit bırakıldı (TCMB EVDS API key gerektirir).
+AYLIK_ENFLASYON_VARSAYIMI = 3.0  # % — TÜİK açıklamasına göre elle güncelleyin
 
-# Eğer ayın 5'inden önce bir gündeysek, o ayın ödemesi henüz çekilmediği için ay sayısını 1 eksilt
-if bugun.day < 5 and ay_sayisi > 1:
+# Uyarı eşiği: toplam değişim bu yüzdeyi (mutlak) aşarsa webhook'a bildirim gider.
+BILDIRIM_ESIK = 5.0
+
+# Hassas değerler koda YAZILMAZ — GitHub Actions Secrets üzerinden okunur.
+# Repo Settings > Secrets and variables > Actions altından tanımlayın:
+#   TEFAS_API_URL     -> doğrulanmış, güvendiğiniz bir fiyat API'si (opsiyonel)
+#   ALERT_WEBHOOK_URL  -> Telegram/Slack webhook (opsiyonel)
+TEFAS_API_URL = os.environ.get("TEFAS_API_URL", "").strip()
+WEBHOOK_URL = os.environ.get("ALERT_WEBHOOK_URL", "").strip()
+
+MAX_RESPONSE_BYTES = 200_000  # kötü niyetli/aşırı büyük yanıta karşı üst sınır
+REQUEST_TIMEOUT = 5
+
+HISTORY_PATH = "data/history.json"  # repo içinde kalıcı, workflow'da commit edilmeli
+
+ay_sayisi = (bugun.year - baslangic_tarihi.year) * 12 + (bugun.month - baslangic_tarihi.month) + 1
+if bugun.day < baslangic_tarihi.day and ay_sayisi > 1:
     ay_sayisi -= 1
 
 toplam_anapara = float(aylik_odeme * ay_sayisi)
@@ -25,66 +45,130 @@ fon_tanimlari = {
     'GEH': {'ad': 'Hisse Senedi Emeklilik Yatırım Fonu', 'agirlik': 0.30, 'giris_fiyati': 2.779911},
     'EMY': {'ad': 'Altın Emeklilik Yatırım Fonu', 'agirlik': 0.20, 'giris_fiyati': 0.009987},
     'GHG': {'ad': 'Dış Borçlanma Araçları Emeklilik Yatırım Fonu', 'agirlik': 0.20, 'giris_fiyati': 1.201487},
-    'GHH': {'ad': 'Sürdürülebilirlik Hisse Senedi Emeklilik Yatırım Fonu', 'agirlik': 0.10, 'giris_fiyati': 0.395887}
+    'GHH': {'ad': 'Sürdürülebilirlik Hisse Senedi Emeklilik Yatırım Fonu', 'agirlik': 0.10, 'giris_fiyati': 0.395887},
+}
+
+# Fallback fiyatları 6 ondalığa çıkarıldı — EMY/GEL gibi düşük birim fiyatlı
+# fonlarda 4 ondalık gerçek kârı gizliyordu (örn. EMY 0.0103 vs gerçek 0.010863).
+YEDEK_FIYATLAR = {
+    'GEL': 0.442970, 'GEH': 2.833800, 'EMY': 0.010863, 'GHG': 1.215962, 'GHH': 0.400294,
 }
 
 tarih_str = bugun.strftime('%d-%m-%Y')
+tarih_iso = bugun.strftime('%Y-%m-%d')
+
+
+# ------------------------------------------------------------------------------
+# GÜVENLİ VERİ ÇEKME
+# ------------------------------------------------------------------------------
+def guvenli_piyasa_verisi_cek(url: str) -> dict:
+    """Doğrulanmış SSL bağlamıyla, boyut sınırlı, şema doğrulamalı istek.
+    Herhangi bir hata durumunda sessizce boş dict döner — çağıran taraf
+    fallback fiyatlara düşer, Action asla bu yüzden çökmez."""
+    if not url:
+        return {}
+    try:
+        ctx = ssl.create_default_context()  # sertifika doğrulaması açık
+        req = urllib.request.Request(url, headers={'User-Agent': 'bes-takip-bot/1.0'})
+        with urllib.request.urlopen(req, timeout=REQUEST_TIMEOUT, context=ctx) as resp:
+            raw = resp.read(MAX_RESPONSE_BYTES + 1)
+            if len(raw) > MAX_RESPONSE_BYTES:
+                print("Uyarı: yanıt boyut sınırını aştı, reddedildi.")
+                return {}
+            data = json.loads(raw.decode('utf-8'))
+
+        if not isinstance(data, list):
+            print("Uyarı: beklenmeyen veri şeması (liste değil), reddedildi.")
+            return {}
+
+        havuz = {}
+        for item in data:
+            if not isinstance(item, dict):
+                continue
+            kod = item.get('kod')
+            fiyat = item.get('fiyat')
+            if not isinstance(kod, str):
+                continue
+            try:
+                havuz[kod] = float(fiyat)
+            except (TypeError, ValueError):
+                continue
+        return havuz
+    except Exception as e:
+        print(f"Canlı veri kaynağına erişilemedi, yedek fiyatlara geçildi: {e}")
+        return {}
+
+
+piyasa_havuzu = guvenli_piyasa_verisi_cek(TEFAS_API_URL)
+
+# ------------------------------------------------------------------------------
+# GEÇMİŞ VERİ (TARİHSEL GRAFİK + RİSK METRİKLERİ İÇİN)
+# ------------------------------------------------------------------------------
+def gecmisi_yukle(path: str) -> list:
+    if not os.path.exists(path):
+        return []
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, list) else []
+    except Exception:
+        return []
+
+
+def gecmisi_kaydet(path: str, gecmis: list):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(gecmis, f, ensure_ascii=False, indent=2)
+
+
+gecmis = gecmisi_yukle(HISTORY_PATH)
+
+# ------------------------------------------------------------------------------
+# FON HESAPLAMALARI
+# ------------------------------------------------------------------------------
 rapor_data = []
+grafik_cubuklari_html = []
+renkler = ['#3b82f6', '#10b981', '#f59e0b', '#ec4899', '#8b5cf6']
 
 toplam_maliyet = 0.0
 toplam_guncel_deger = 0.0
 
-# Kesinlikle çökmeyen, her gün güncellenen canlı kamu API havuzu
-try:
-    url = "https://euw.dev tunnels.ms/api/tefas/canli"
-    req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-    with urllib.request.urlopen(req, timeout=5) as response:
-        canli_json = json.loads(response.read().decode())
-    piyasa_havuzu = {item['kod']: item for item in canli_json}
-except Exception as e:
-    print(f"Canli borsa motoru yedek moda gecti: {e}")
-    piyasa_havuzu = {}
-
-# Grafik çubuklarını saf HTML/CSS ile çizmek için listeler
-grafik_cubuklari_html = []
-renkler = ['#3b82f6', '#10b981', '#f59e0b', '#ec4899', '#8b5cf6']
-
 for idx, (kod, info) in enumerate(fon_tanimlari.items()):
     giris_fiy = float(info['giris_fiyati'])
-    
-    if kod in piyasa_havuzu:
-        guncel_fiy = float(piyasa_havuzu[kod]['fiyat'])
+
+    if kod in piyasa_havuzu and piyasa_havuzu[kod] > 0:
+        guncel_fiy = piyasa_havuzu[kod]
+        kaynak_etiket = '<span style="color:#059669;font-size:11px;font-weight:600;">● Canlı</span>'
     else:
-        yedek_fiyatlar = {'GEL': 0.4430, 'GEH': 2.8338, 'EMY': 0.0103, 'GHG': 1.2204, 'GHH': 0.4012}
-        guncel_fiy = float(yedek_fiyatlar.get(kod, giris_fiy))
-    
-    toplam_degisim_orani = float(((guncel_fiy - giris_fiy) / giris_fiy) * 100)
-    fon_maliyeti = float(toplam_anapara * info['agirlik'])
-    fon_guncel_degeri = float(fon_maliyeti * (1 + (toplam_degisim_orani / 100)))
-    fon_net_kar_zarar = float(fon_guncel_degeri - fon_maliyeti)
-    
+        guncel_fiy = float(YEDEK_FIYATLAR.get(kod, giris_fiy))
+        kaynak_etiket = '<span style="color:#d97706;font-size:11px;font-weight:600;">● Yedek</span>'
+
+    toplam_degisim_orani = ((guncel_fiy - giris_fiy) / giris_fiy) * 100
+    fon_maliyeti = toplam_anapara * info['agirlik']
+    fon_guncel_degeri = fon_maliyeti * (1 + (toplam_degisim_orani / 100))
+    fon_net_kar_zarar = fon_guncel_degeri - fon_maliyeti
+
     toplam_maliyet += fon_maliyeti
     toplam_guncel_deger += fon_guncel_degeri
-    
+
     renk = "green" if fon_net_kar_zarar >= 0 else "red"
     arti_eksi = "+" if fon_net_kar_zarar >= 0 else ""
-    
-    # Tablo satır yapısı
+    ad_guvenli = html.escape(info['ad'])
+
     rapor_data.append(f"""
     <tr>
         <td style='padding:14px; border-bottom:1px solid #e2e8f0; font-weight:bold; color:#1e293b;'>{kod}</td>
-        <td style='padding:14px; border-bottom:1px solid #e2e8f0; color:#475569;'>{info['ad']}</td>
+        <td style='padding:14px; border-bottom:1px solid #e2e8f0; color:#475569;'>{ad_guvenli}</td>
         <td style='padding:14px; border-bottom:1px solid #e2e8f0; color:#475569; font-weight:500;'>{info['agirlik']*100:.1f}%</td>
         <td style='padding:14px; border-bottom:1px solid #e2e8f0; color:#475569;'>{fon_maliyeti:.2f} TL</td>
-        <td style='padding:14px; border-bottom:1px solid #e2e8f0; color:#64748b; font-family:monospace;'>{giris_fiy:.4f} TL</td>
-        <td style='padding:14px; border-bottom:1px solid #e2e8f0; color:#0f172a; font-family:monospace; font-weight:500;'>{guncel_fiy:.4f} TL</td>
+        <td style='padding:14px; border-bottom:1px solid #e2e8f0; color:#64748b; font-family:monospace;'>{giris_fiy:.6f} TL</td>
+        <td style='padding:14px; border-bottom:1px solid #e2e8f0; color:#0f172a; font-family:monospace; font-weight:500;'>{guncel_fiy:.6f} TL {kaynak_etiket}</td>
         <td style='padding:14px; border-bottom:1px solid #e2e8f0; color:{renk}; font-weight:600;'>{arti_eksi}{toplam_degisim_orani:.2f}%</td>
         <td style='padding:14px; border-bottom:1px solid #e2e8f0; font-weight:bold; color:{renk};'>{arti_eksi}{fon_net_kar_zarar:.2f} TL</td>
     </tr>
     """)
-    
-    # Saf HTML/CSS Grafik Çubuğu Üretimi (Yüklenme hızını maksimuma uçurur)
-    bar_height = max(5, min(int(abs(fon_net_kar_zarar) * 2), 200)) # Boyut ölçekleme
+
+    bar_height = max(5, min(int(abs(fon_net_kar_zarar) * 2), 200))
     grafik_cubuklari_html.append(f"""
     <div style="display:flex; flex-direction:column; align-items:center; flex:1; min-width:60px;">
         <div style="font-size:11px; font-weight:bold; margin-bottom:5px; color:#1e293b;">{arti_eksi}{fon_net_kar_zarar:.2f} TL</div>
@@ -94,30 +178,175 @@ for idx, (kod, info) in enumerate(fon_tanimlari.items()):
     """)
 
 genel_kar = toplam_guncel_deger - toplam_maliyet
-dogru_genel_degisim = (genel_kar / toplam_maliyet) * 100
+dogru_genel_degisim = (genel_kar / toplam_maliyet) * 100 if toplam_maliyet else 0.0
 
-# Ultra hafifletilmiş, sıfır saniye gecikmeli akıllı HTML şablonu
+# ------------------------------------------------------------------------------
+# GEÇMİŞE BUGÜNÜ EKLE (aynı gün varsa güncelle, yoksa ekle)
+# ------------------------------------------------------------------------------
+bugun_kaydi = {
+    "tarih": tarih_iso,
+    "toplam_deger": round(toplam_guncel_deger, 2),
+    "toplam_kar": round(genel_kar, 2),
+    "toplam_degisim": round(dogru_genel_degisim, 4),
+}
+gecmis = [g for g in gecmis if g.get("tarih") != tarih_iso]
+gecmis.append(bugun_kaydi)
+gecmis.sort(key=lambda g: g["tarih"])
+gecmisi_kaydet(HISTORY_PATH, gecmis)
+
+# ------------------------------------------------------------------------------
+# RİSK METRİKLERİ (geçmişten)
+# ------------------------------------------------------------------------------
+volatilite_html = "Yetersiz veri (en az 2 gün gerekli)"
+drawdown_html = "Yetersiz veri"
+if len(gecmis) >= 2:
+    degerler = [g["toplam_deger"] for g in gecmis]
+    gunluk_getiriler = [
+        (degerler[i] - degerler[i - 1]) / degerler[i - 1] * 100
+        for i in range(1, len(degerler)) if degerler[i - 1] != 0
+    ]
+    if len(gunluk_getiriler) >= 2:
+        volatilite = statistics.stdev(gunluk_getiriler)
+        volatilite_html = f"%{volatilite:.2f} (günlük std. sapma)"
+    zirve = degerler[0]
+    maks_dusus = 0.0
+    for v in degerler:
+        zirve = max(zirve, v)
+        dusus = (v - zirve) / zirve * 100 if zirve else 0
+        maks_dusus = min(maks_dusus, dusus)
+    drawdown_html = f"%{maks_dusus:.2f}"
+
+# ------------------------------------------------------------------------------
+# ENFLASYON KARŞILAŞTIRMA (manuel varsayımla)
+# ------------------------------------------------------------------------------
+tahmini_enflasyon = AYLIK_ENFLASYON_VARSAYIMI * ay_sayisi
+enflasyon_farki = dogru_genel_degisim - tahmini_enflasyon
+enf_renk = "#059669" if enflasyon_farki >= 0 else "#dc2626"
+enf_yon = "üzerinde" if enflasyon_farki >= 0 else "altında"
+
+# ------------------------------------------------------------------------------
+# TARİHSEL GRAFİK — SAF SVG (harici JS/CDN yok, sıfır ek yükleme gecikmesi)
+# ------------------------------------------------------------------------------
+def svg_cizgi_grafik(gecmis: list, genislik=640, yukseklik=140) -> str:
+    if len(gecmis) < 2:
+        return '<p style="color:#94a3b8;font-size:13px;">Grafik için en az 2 günlük veri gerekli. Yarın tekrar kontrol edin.</p>'
+
+    degerler = [g["toplam_deger"] for g in gecmis]
+    min_v, max_v = min(degerler), max(degerler)
+    span = (max_v - min_v) or 1
+    pad = 10
+    n = len(degerler)
+
+    noktalar = []
+    for i, v in enumerate(degerler):
+        x = pad + (i / (n - 1)) * (genislik - 2 * pad)
+        y = yukseklik - pad - ((v - min_v) / span) * (yukseklik - 2 * pad)
+        noktalar.append((round(x, 1), round(y, 1)))
+
+    cizgi = " ".join(f"{x},{y}" for x, y in noktalar)
+    renk = "#10b981" if degerler[-1] >= degerler[0] else "#dc2626"
+    dolgu_noktalari = f"{pad},{yukseklik - pad} " + cizgi + f" {genislik - pad},{yukseklik - pad}"
+
+    ilk_etiket = html.escape(gecmis[0]["tarih"])
+    son_etiket = html.escape(gecmis[-1]["tarih"])
+
+    return f"""
+    <svg viewBox="0 0 {genislik} {yukseklik}" style="width:100%; height:auto;" preserveAspectRatio="none">
+        <polygon points="{dolgu_noktalari}" fill="{renk}" opacity="0.08"></polygon>
+        <polyline points="{cizgi}" fill="none" stroke="{renk}" stroke-width="2.5"
+                   stroke-linejoin="round" stroke-linecap="round"></polyline>
+    </svg>
+    <div style="display:flex; justify-content:space-between; font-size:11px; color:#94a3b8; margin-top:4px;">
+        <span>{ilk_etiket}</span><span>{son_etiket}</span>
+    </div>
+    """
+
+
+tarihsel_grafik_svg = svg_cizgi_grafik(gecmis)
+
+# ------------------------------------------------------------------------------
+# KATKI PAYI TAKVİMİ
+# ------------------------------------------------------------------------------
+katki_chips = []
+yil, ay = baslangic_tarihi.year, baslangic_tarihi.month
+for i in range(ay_sayisi):
+    etiket = f"{ay:02d}.{yil}"
+    katki_chips.append(
+        f'<span style="display:inline-block;background:#f0fdf4;color:#166534;border:1px solid #bbf7d0;'
+        f'border-radius:8px;padding:4px 10px;font-size:11px;font-weight:600;margin:2px;">✓ {etiket} · {aylik_odeme:.0f} TL</span>'
+    )
+    ay += 1
+    if ay > 12:
+        ay = 1
+        yil += 1
+katki_html = "".join(katki_chips)
+
+# ------------------------------------------------------------------------------
+# CSV EXPORT (pandas ile)
+# ------------------------------------------------------------------------------
+csv_rows = []
+for kod, info in fon_tanimlari.items():
+    giris_fiy = float(info['giris_fiyati'])
+    guncel_fiy = piyasa_havuzu.get(kod) or YEDEK_FIYATLAR.get(kod, giris_fiy)
+    degisim = ((guncel_fiy - giris_fiy) / giris_fiy) * 100
+    maliyet = toplam_anapara * info['agirlik']
+    kar = maliyet * (degisim / 100)
+    csv_rows.append({
+        "Fon Kodu": kod, "Fon Adı": info['ad'], "Ağırlık(%)": info['agirlik'] * 100,
+        "Maliyet(TL)": round(maliyet, 2), "Giriş Fiyatı": giris_fiy, "Güncel Fiyat": guncel_fiy,
+        "Değişim(%)": round(degisim, 2), "Net Kâr/Zarar(TL)": round(kar, 2),
+    })
+os.makedirs("public", exist_ok=True)
+pd.DataFrame(csv_rows).to_csv("public/portfoy_raporu.csv", index=False, encoding="utf-8-sig")
+
+# ------------------------------------------------------------------------------
+# UYARI WEBHOOK'U (opsiyonel, eşik aşılırsa)
+# ------------------------------------------------------------------------------
+def uyari_gonder(url: str, mesaj: str):
+    if not url:
+        return
+    try:
+        payload = json.dumps({"text": mesaj}).encode("utf-8")
+        req = urllib.request.Request(url, data=payload, headers={"Content-Type": "application/json"})
+        ctx = ssl.create_default_context()
+        urllib.request.urlopen(req, timeout=REQUEST_TIMEOUT, context=ctx)
+    except Exception as e:
+        print(f"Bildirim gönderilemedi: {e}")
+
+
+if abs(dogru_genel_degisim) >= BILDIRIM_ESIK:
+    uyari_gonder(
+        WEBHOOK_URL,
+        f"BES Portföy uyarısı: toplam değişim %{dogru_genel_degisim:.2f} "
+        f"(eşik: %{BILDIRIM_ESIK}). Tarih: {tarih_str}",
+    )
+
+# ------------------------------------------------------------------------------
+# HTML ÜRETİMİ
+# ------------------------------------------------------------------------------
 html_icerik = f"""<!DOCTYPE html>
-<html>
+<html lang="tr">
 <head>
     <title>BES Canli Takip Paneli</title>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'unsafe-inline'; img-src 'self' data:;">
 </head>
 <body style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif; background-color:#f8fafc; margin:0; padding:20px; color:#333;">
     <div style="max-width:1100px; margin:0 auto; background:white; padding:30px; border-radius:16px; box-shadow:0 10px 25px rgba(0,0,0,0.03); border:1px solid #e2e8f0;">
-        <div style="display:flex; justify-content:between; align-items:center; border-bottom:2px solid #f1f5f9; padding-bottom:20px; margin-bottom:25px; flex-wrap:wrap; gap:15px;">
+        <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:2px solid #f1f5f9; padding-bottom:20px; margin-bottom:25px; flex-wrap:wrap; gap:15px;">
             <div>
                 <h1 style="margin:0; color:#0f172a; font-size:24px; font-weight:800; letter-spacing:-0.5px;">Garanti BES Portföy Takip Paneli</h1>
-                <p style="color:#64748b; font-size:14px; margin:5px 0 0 0;">Yapay Zeka Analiz Paneli | Son Güncelleme: <strong>{tarih_str} - 19:30</strong></p>
+                <p style="color:#64748b; font-size:14px; margin:5px 0 0 0;">Son Güncelleme: <strong>{tarih_str} - {bugun.strftime('%H:%M')}</strong> ·
+                <a href="portfoy_raporu.csv" style="color:#2563eb; text-decoration:none; font-weight:600;">⬇ CSV indir</a></p>
             </div>
         </div>
-        
+
         <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap:20px; margin-bottom:30px;">
             <div style="background:#f8fafc; padding:20px; border-radius:12px; border:1px solid #e2e8f0;">
                 <div style="font-size:13px; font-weight:600; color:#64748b; text-transform:uppercase;">Yatırılan Toplam Anapara</div>
                 <div style="font-size:26px; font-weight:800; color:#0f172a; margin-top:8px;">{toplam_maliyet:.2f} TL</div>
-                <div style="font-size:12px; color:#64748b; margin-top:5px;"> Dönem: {ay_sayisi}. Ay </div>
+                <div style="font-size:12px; color:#64748b; margin-top:5px;">Dönem: {ay_sayisi}. Ay</div>
             </div>
             <div style="background:#f0fdf4; padding:20px; border-radius:12px; border:1px solid #bbf7d0; border-left:6px solid #10b981;">
                 <div style="font-size:13px; font-weight:600; color:#15803d; text-transform:uppercase;">Toplam Net Portföy Kârı</div>
@@ -127,9 +356,30 @@ html_icerik = f"""<!DOCTYPE html>
                 <div style="font-size:13px; font-weight:600; color:#0f766e; text-transform:uppercase;">Toplam Portföy Büyümesi</div>
                 <div style="font-size:26px; font-weight:800; color:#115e59; margin-top:8px;">+{dogru_genel_degisim:.2f}%</div>
             </div>
+            <div style="background:#fefce8; padding:20px; border-radius:12px; border:1px solid #fef08a;">
+                <div style="font-size:13px; font-weight:600; color:#854d0e; text-transform:uppercase;">Enflasyona Göre (varsayım)</div>
+                <div style="font-size:22px; font-weight:800; color:{enf_renk}; margin-top:8px;">%{enflasyon_farki:+.2f} {enf_yon}</div>
+                <div style="font-size:11px; color:#a16207; margin-top:5px;">Aylık %{AYLIK_ENFLASYON_VARSAYIMI} varsayımla</div>
+            </div>
         </div>
 
-        <div style="overflow-x:auto; margin-bottom:40px; border:1px solid #e2e8f0; border-radius:12px;">
+        <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap:20px; margin-bottom:30px;">
+            <div style="background:#f8fafc; padding:16px; border-radius:12px; border:1px solid #e2e8f0;">
+                <div style="font-size:12px; font-weight:600; color:#64748b; text-transform:uppercase;">Volatilite</div>
+                <div style="font-size:16px; font-weight:700; color:#0f172a; margin-top:6px;">{volatilite_html}</div>
+            </div>
+            <div style="background:#f8fafc; padding:16px; border-radius:12px; border:1px solid #e2e8f0;">
+                <div style="font-size:12px; font-weight:600; color:#64748b; text-transform:uppercase;">Maks. Düşüş (Drawdown)</div>
+                <div style="font-size:16px; font-weight:700; color:#0f172a; margin-top:6px;">{drawdown_html}</div>
+            </div>
+        </div>
+
+        <div style="border:1px solid #e2e8f0; border-radius:12px; padding:20px; margin-bottom:30px; background:#fcfcfd;">
+            <h3 style="margin-top:0; margin-bottom:15px; color:#1e293b; font-size:15px;">📈 Tarihsel Portföy Değeri</h3>
+            {tarihsel_grafik_svg}
+        </div>
+
+        <div style="overflow-x:auto; margin-bottom:30px; border:1px solid #e2e8f0; border-radius:12px;">
             <table style="width:100%; border-collapse:collapse; text-align:left; font-size:14px;">
                 <thead>
                     <tr style="background:#1e293b; color:white; font-weight:600;">
@@ -149,12 +399,16 @@ html_icerik = f"""<!DOCTYPE html>
             </table>
         </div>
 
-        <!-- SAF HTML/CSS GECİKMESİZ YÜKLENEN GRAFİK ALANI -->
-        <div style="border:1px solid #e2e8f0; border-radius:12px; padding:25px; background:#f8fafc;">
+        <div style="border:1px solid #e2e8f0; border-radius:12px; padding:25px; background:#f8fafc; margin-bottom:30px;">
             <h3 style="margin-top:0; margin-bottom:25px; color:#1e293b; font-size:16px;">📊 Fon Bazlı Net Kâr Dağılım Grafiği (TL)</h3>
             <div style="display:flex; justify-content:space-around; align-items:flex-end; max-width:700px; margin:0 auto; height:240px; border-bottom:2px solid #cbd5e1; padding-bottom:5px; gap:10px;">
                 {"".join(grafik_cubuklari_html)}
             </div>
+        </div>
+
+        <div style="border:1px solid #e2e8f0; border-radius:12px; padding:20px;">
+            <h3 style="margin-top:0; margin-bottom:12px; color:#1e293b; font-size:15px;">🗓 Katkı Payı Takvimi</h3>
+            <div>{katki_html}</div>
         </div>
     </div>
 </body>
@@ -164,4 +418,5 @@ html_icerik = f"""<!DOCTYPE html>
 os.makedirs("public", exist_ok=True)
 with open("public/index.html", "w", encoding="utf-8") as f:
     f.write(html_icerik)
-print("Hız optimizasyonlu otonom web paneli başarıyla yüklendi.")
+
+print("Panel güncellendi. Kaynak:", "canlı API" if piyasa_havuzu else "yedek fiyatlar")
