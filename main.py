@@ -212,7 +212,7 @@ if len(gecmis) >= 2:
         volatilite = statistics.stdev(gunluk_getiriler)
         volatilite_html = f"%{volatilite:.2f} (gunluk std. sapma)"
     
-    zirve = degerler[0]
+    zirve = degerler
     maks_dusus = 0.0
     for v in degerler:
         zirve = max(zirve, v)
@@ -223,3 +223,7 @@ if len(gecmis) >= 2:
 # ------------------------------------------------------------------------------
 # ENFLASYON HESAPLAMA
 # ------------------------------------------------------------------------------
+def tufe_kumulatif_getir(api_key: str, baslangic: datetime, bitis: datetime):
+    if not api_key:
+        return None
+    try:
