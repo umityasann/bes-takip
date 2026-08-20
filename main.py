@@ -15,8 +15,7 @@ from reportlab.lib.units import mm
 from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.enums import TA_LEFT, TA_CENTER
-# PDF İçerisine Grafik Çizmek İçin Gerekli Olan ReportLab Modülleri
-from reportlab.graphics.shapes import Drawing, Rect, String
+from reportlab.graphics.shapes import Drawing
 from reportlab.graphics.charts.barcharts import VerticalBarChart
 
 # ==============================================================================
@@ -26,7 +25,7 @@ aylik_odeme = 5000.0
 baslangic_tarihi = datetime(2026, 8, 5)
 bugun = datetime.now()
 
-AYLIK_ENFLASYON_VARSAYIMI = 3.0  # % — sadece TCMB erişilemezse kullanılır
+AYLIK_ENFLASYON_VARSAYIMI = 3.0  
 BILDIRIM_ESIK = 5.0
 
 WEBHOOK_URL = os.environ.get("ALERT_WEBHOOK_URL", "").strip()
@@ -66,11 +65,7 @@ def tefas_fiyatlarini_cek(fon_kodlari: list, gun_sayisi_geriye: int = 7) -> dict
         tarih = (bugun - timedelta(days=gun_ofset)).strftime("%Y-%m-%d")
         try:
             df = crawler.fetch(tarih, columns="info", kind="EMK")
-        except (TefasAPIError, TefasRateLimitError) as e:
-            print(f"TEFAS API hatasi ({tarih}): {e}")
-            continue
-        except Exception as e:
-            print(f"Beklenmeyen hata ({tarih}): {e}")
+        except:
             continue
 
         if df is None or df.empty:
@@ -84,18 +79,16 @@ def tefas_fiyatlarini_cek(fon_kodlari: list, gun_sayisi_geriye: int = 7) -> dict
         for _, row in df_filtreli.iterrows():
             try:
                 havuz[row["fund_code"]] = float(row["price"])
-            except (TypeError, ValueError):
+            except:
                 continue
 
         if havuz:
-            print(f"TEFAS verisi bulundu: {tarih} ({len(havuz)}/{len(fon_kodlari)} fon)")
             return havuz
     return {}
 
 try:
     piyasa_havuzu = tefas_fiyatlarini_cek(FON_KODLARI)
-except Exception as e:
-    print(f"TEFAS entegrasyonu basarisiz: {e}")
+except:
     piyasa_havuzu = {}
 
 def gecmisi_yukle(path: str) -> list:
@@ -105,7 +98,7 @@ def gecmisi_yukle(path: str) -> list:
         with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
         return data if isinstance(data, list) else []
-    except Exception:
+    except:
         return []
 
 def gecmisi_kaydet(path: str, gecmis: list):
@@ -116,7 +109,7 @@ def gecmisi_kaydet(path: str, gecmis: list):
 gecmis = gecmisi_yukle(HISTORY_PATH)
 
 # ==============================================================================
-# FON HESAPLAMALARI
+# HESAPLAMA MOTORU
 # ==============================================================================
 rapor_data = []
 grafik_cubuklari_html = []
@@ -215,18 +208,33 @@ def tufe_kumulatif_getir(api_key: str, baslangic: datetime, bitis: datetime):
         with urllib.request.urlopen(req, timeout=REQUEST_TIMEOUT, context=ctx) as resp:
             data = json.loads(resp.read().decode("utf-8"))
         degerler = [float(item["TP_FG_J0"]) for item in data.get("items", []) if item.get("TP_FG_J0") is not None]
-        return (degerler[-1] - degerler[0]) / degerler[0] * 100 if len(degerler) >= 2 else None
-    except: return None
+        if len(degerler) >= 2:
+            return (degerler[-1] - degerler[0]) / degerler[0] * 100
+        return None
+    except: 
+        return None
 
 tahmini_enflasyon = tufe_kumulatif_getir(TCMB_API_KEY, baslangic_tarihi, bugun)
 if tahmini_enflasyon is not None:
-    enflasyon_kaynagi = "TCMB EVDS (Gerçek)"
+    enflasyon_kaynagi = "TCMB EVDS (Gercek)"
 else:
     tahmini_enflasyon = AYLIK_ENFLASYON_VARSAYIMI * ay_sayisi
-    enflasyon_kaynagi = "Manuel Varsayım"
+    enflasyon_kaynagi = "Manuel Varsayim"
 
 enflasyon_farki = dogru_genel_degisim - tahmini_enflasyon
 enf_yon = "Uzerinde" if enflasyon_farki >= 0 else "Altinda"
 enf_renk = "#059669" if enflasyon_farki >= 0 else "#dc2626"
 
+# BURADAKİ GRAB HIZLI BOŞLUK HATASI TAMAMEN DÜZELTİLDİ
 def svg_cizgi_grafik(gecmis: list, genislik=640, yukseklik=140) -> str:
+    if len(gecmis) < 2: 
+        return '<p style="color:#94a3b8;font-size:13px;">Grafik icin yeterli veri yok.</p>'
+    degerler = [g["toplam_deger"] for g in gecmis]
+    min_v, max_v = min(degerler), max(degerler)
+    span = (max_v - min_v) or 1
+    pad = 10
+    n = len(degerler)
+    noktalar = []
+    for i, v in enumerate(degerler):
+        x = pad + (i / (n - 1)) * (genislik - 2 * pad)
+        y = yukseklik - pad - ((v - min_v) / span) * (yukseklik - 2 * pad)
