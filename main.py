@@ -67,10 +67,10 @@ def tefas_fiyatlarini_cek(fon_kodlari: list, gun_sayisi_geriye: int = 7) -> dict
         try:
             df = crawler.fetch(tarih, columns="info", kind="EMK")
         except (TefasAPIError, TefasRateLimitError) as e:
-            print(f"TEFAS API hatası ({tarih}): {e}")
+            print("TEFAS API hatası: " + str(e))
             continue
         except Exception as e:
-            print(f"Beklenmeyen hata ({tarih}): {e}")
+            print("Beklenmeyen hata: " + str(e))
             continue
 
         if df is None or df.empty:
@@ -88,7 +88,7 @@ def tefas_fiyatlarini_cek(fon_kodlari: list, gun_sayisi_geriye: int = 7) -> dict
                 continue
 
         if havuz:
-            print(f"TEFAS verisi bulundu: {tarih} ({len(havuz)}/{len(fon_kodlari)} fon)")
+            print("TEFAS verisi bulundu: " + tarih)
             return havuz
 
     print("Son 7 günde TEFAS verisi bulunamadı, yedek fiyatlara geçildi.")
@@ -97,7 +97,7 @@ def tefas_fiyatlarini_cek(fon_kodlari: list, gun_sayisi_geriye: int = 7) -> dict
 try:
     piyasa_havuzu = tefas_fiyatlarini_cek(FON_KODLARI)
 except Exception as e:
-    print(f"TEFAS entegrasyonu tamamen başarısız oldu, yedek fiyatlara geçildi: {e}")
+    print("TEFAS entegrasyonu tamamen başarısız oldu, yedek fiyatlara geçildi: " + str(e))
     piyasa_havuzu = {}
 
 # ------------------------------------------------------------------------------
@@ -160,27 +160,26 @@ for idx, (kod, info) in enumerate(fon_tanimlari.items()):
     arti_eksi = "+" if fon_net_kar_zarar >= 0 else ""
     ad_guvenli = html.escape(info['ad'])
 
-    rapor_data.append(f"""
-    <tr>
-        <td style='padding:14px; border-bottom:1px solid #e2e8f0; font-weight:bold; color:#1e293b;'>{kod}</td>
-        <td style='padding:14px; border-bottom:1px solid #e2e8f0; color:#475569;'>{ad_guvenli}</td>
-        <td style='padding:14px; border-bottom:1px solid #e2e8f0; color:#475569; font-weight:500;'>{info['agirlik']*100:.1f}%</td>
-        <td style='padding:14px; border-bottom:1px solid #e2e8f0; color:#475569;'>{fon_maliyeti:.2f} TL</td>
-        <td style='padding:14px; border-bottom:1px solid #e2e8f0; color:#64748b; font-family:monospace;'>{giris_fiy:.6f} TL</td>
-        <td style='padding:14px; border-bottom:1px solid #e2e8f0; color:#0f172a; font-family:monospace; font-weight:500;'>{guncel_fiy:.6f} TL {kaynak_etiket}</td>
-        <td style='padding:14px; border-bottom:1px solid #e2e8f0; color:{renk}; font-weight:600;'>{arti_eksi}{toplam_degisim_orani:.2f}%</td>
-        <td style='padding:14px; border-bottom:1px solid #e2e8f0; font-weight:bold; color:{renk};'>{arti_eksi}{fon_net_kar_zarar:.2f} TL</td>
-    </tr>
-    """)
+    # ESKİ F-STRING YERİNE GÜVENLİ METİN BİRLEŞTİRME
+    satir_html = "<tr>" \
+                 "<td style='padding:14px; border-bottom:1px solid #e2e8f0; font-weight:bold; color:#1e293b;'>" + str(kod) + "</td>" \
+                 "<td style='padding:14px; border-bottom:1px solid #e2e8f0; color:#475569;'>" + str(ad_guvenli) + "</td>" \
+                 "<td style='padding:14px; border-bottom:1px solid #e2e8f0; color:#475569; font-weight:500;'>" + f"{info['agirlik']*100:.1f}%" + "</td>" \
+                 "<td style='padding:14px; border-bottom:1px solid #e2e8f0; color:#475569;'>" + f"{fon_maliyeti:.2f} TL" + "</td>" \
+                 "<td style='padding:14px; border-bottom:1px solid #e2e8f0; color:#64748b; font-family:monospace;'>" + f"{giris_fiy:.6f} TL" + "</td>" \
+                 "<td style='padding:14px; border-bottom:1px solid #e2e8f0; color:#0f172a; font-family:monospace; font-weight:500;'>" + f"{guncel_fiy:.6f} TL " + kaynak_etiket + "</td>" \
+                 "<td style='padding:14px; border-bottom:1px solid #e2e8f0; color:" + renk + "; font-weight:600;'>" + arti_eksi + f"{toplam_degisim_orani:.2f}%" + "</td>" \
+                 "<td style='padding:14px; border-bottom:1px solid #e2e8f0; font-weight:bold; color:" + renk + ";'>" + arti_eksi + f"{fon_net_kar_zarar:.2f} TL" + "</td>" \
+                 "</tr>"
+    rapor_data.append(satir_html)
 
     bar_height = max(5, min(int(abs(fon_net_kar_zarar) * 2), 200))
-    grafik_cubuklari_html.append(f"""
-    <div style="display:flex; flex-direction:column; align-items:center; flex:1; min-width:60px;">
-        <div style="font-size:11px; font-weight:bold; margin-bottom:5px; color:#1e293b;">{arti_eksi}{fon_net_kar_zarar:.2f} TL</div>
-        <div style="width:100%; background-color:{renkler[idx % len(renkler)]}; height:{bar_height}px; border-radius:6px 6px 0 0;"></div>
-        <div style="margin-top:8px; font-weight:bold; font-size:13px; color:#475569;">{kod}</div>
-    </div>
-    """)
+    cubuk_html = '<div style="display:flex; flex-direction:column; align-items:center; flex:1; min-width:60px;">' \
+                 '<div style="font-size:11px; font-weight:bold; margin-bottom:5px; color:#1e293b;">' + arti_eksi + f"{fon_net_kar_zarar:.2f} TL" + '</div>' \
+                 '<div style="width:100%; background-color:' + renkler[idx % len(renkler)] + '; height:' + str(bar_height) + 'px; border-radius:6px 6px 0 0;"></div>' \
+                 '<div style="margin-top:8px; font-weight:bold; font-size:13px; color:#475569;">' + str(kod) + '</div>' \
+                 '</div>'
+    grafik_cubuklari_html.append(cubuk_html)
 
 genel_kar = toplam_guncel_deger - toplam_maliyet
 dogru_genel_degisim = (genel_kar / toplam_maliyet) * 100 if toplam_maliyet else 0.0
@@ -225,14 +224,3 @@ if len(gecmis) >= 2:
 # ------------------------------------------------------------------------------
 # ENFLASYON HESAPLAMA
 # ------------------------------------------------------------------------------
-def tufe_kumulatif_getir(api_key: str, baslangic: datetime, bitis: datetime):
-    if not api_key:
-        return None
-    try:
-        params = urllib.parse.urlencode({
-            "series": "TP.FG.J0",
-            "startDate": baslangic.strftime("%d-%m-%Y"),
-            "endDate": bitis.strftime("%d-%m-%Y"),
-            "frequency": "5",  
-            "type": "json",
-        })
