@@ -6,16 +6,8 @@ on:
     - cron: '30 16 * * *'
   workflow_dispatch: # Manuel çalıştırma butonu ekler
 
-# GitHub Pages'e doğrudan yükleme yapabilmek için gereken en yüksek sunucu izinleri
 permissions:
   contents: write
-  pages: write
-  id-token: write
-
-# Aynı anda birden fazla çalışma çakışırsa eskiyi iptal eder, hızı artırır
-concurrency:
-  group: "pages"
-  cancel-in-progress: true
 
 jobs:
   build:
@@ -37,14 +29,8 @@ jobs:
     - name: Web Sayfasini Uret
       run: python main.py
 
-    - name: GitHub Pages Altyapisini Kur
-      uses: actions/configure-pages@v3
-
-    - name: Sayfa Arsirini Yukle
-      uses: actions/upload-pages-artifact@v3
+    - name: Web Sitesini İnternete Firlat (Klasik Guvenli Motor)
+      uses: JamesIves/github-pages-deploy-action@v4
       with:
-        path: 'public'
-
-    - name: Web Sitesini Canliya Al (Garantili Motor)
-      id: deployment
-      uses: actions/deploy-pages@v4
+        folder: public
+        branch: gh-pages
