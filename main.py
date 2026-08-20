@@ -5,6 +5,7 @@ import html
 import urllib.request
 import urllib.parse
 import statistics
+import base64
 from datetime import datetime, timedelta
 
 import pandas as pd
@@ -234,4 +235,3 @@ def tufe_kumulatif_getir(api_key: str, baslangic: datetime, bitis: datetime):
             "endDate": bitis.strftime("%d-%m-%Y"),
             "frequency": "5",  
             "type": "json",
-        })
