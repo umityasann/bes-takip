@@ -67,7 +67,7 @@ def tefas_fiyatlarini_cek(fon_kodlari: list, gun_sayisi_geriye: int = 7) -> dict
         try:
             df = crawler.fetch(tarih, columns="info", kind="EMK")
         except (TefasAPIError, TefasRateLimitError) as e:
-            print("TEFAS API hatası: " + str(e))
+            print("TEFAS API hatasi: " + str(e))
             continue
         except Exception as e:
             print("Beklenmeyen hata: " + str(e))
@@ -91,13 +91,13 @@ def tefas_fiyatlarini_cek(fon_kodlari: list, gun_sayisi_geriye: int = 7) -> dict
             print("TEFAS verisi bulundu: " + tarih)
             return havuz
 
-    print("Son 7 günde TEFAS verisi bulunamadı, yedek fiyatlara geçildi.")
+    print("Son 7 gunde TEFAS verisi bulunamadi, yedek fiyatlara gecildi.")
     return {}
 
 try:
     piyasa_havuzu = tefas_fiyatlarini_cek(FON_KODLARI)
 except Exception as e:
-    print("TEFAS entegrasyonu tamamen başarısız oldu, yedek fiyatlara geçildi: " + str(e))
+    print("TEFAS entegrasyonu tamamen basarisiz oldu, yedek fiyatlara gecildi: " + str(e))
     piyasa_havuzu = {}
 
 # ------------------------------------------------------------------------------
@@ -136,7 +136,7 @@ for idx, (kod, info) in enumerate(fon_tanimlari.items()):
 
     if kod in piyasa_havuzu and piyasa_havuzu[kod] > 0:
         guncel_fiy = piyasa_havuzu[kod]
-        kaynak_etiket = '<span style="color:#059669;font-size:11px;font-weight:600;">● Canlı</span>'
+        kaynak_etiket = '<span style="color:#059669;font-size:11px;font-weight:600;">● Canli</span>'
     else:
         guncel_fiy = float(YEDEK_FIYATLAR.get(kod, giris_fiy))
         kaynak_etiket = '<span style="color:#d97706;font-size:11px;font-weight:600;">● Yedek</span>'
@@ -153,14 +153,13 @@ for idx, (kod, info) in enumerate(fon_tanimlari.items()):
         "kod": kod, "ad": info['ad'], "agirlik": info['agirlik'] * 100,
         "maliyet": fon_maliyeti, "giris": giris_fiy, "guncel": guncel_fiy,
         "degisim": toplam_degisim_orani, "kar": fon_net_kar_zarar,
-        "kaynak": "Canlı" if kod in piyasa_havuzu and piyasa_havuzu[kod] > 0 else "Yedek",
+        "kaynak": "Canli" if kod in piyasa_havuzu and piyasa_havuzu[kod] > 0 else "Yedek",
     })
 
     renk = "green" if fon_net_kar_zarar >= 0 else "red"
     arti_eksi = "+" if fon_net_kar_zarar >= 0 else ""
     ad_guvenli = html.escape(info['ad'])
 
-    # ESKİ F-STRING YERİNE GÜVENLİ METİN BİRLEŞTİRME
     satir_html = "<tr>" \
                  "<td style='padding:14px; border-bottom:1px solid #e2e8f0; font-weight:bold; color:#1e293b;'>" + str(kod) + "</td>" \
                  "<td style='padding:14px; border-bottom:1px solid #e2e8f0; color:#475569;'>" + str(ad_guvenli) + "</td>" \
@@ -201,7 +200,7 @@ gecmisi_kaydet(HISTORY_PATH, gecmis)
 # ------------------------------------------------------------------------------
 # RİSK METRİKLERİ
 # ------------------------------------------------------------------------------
-volatilite_html = "Yetersiz veri (en az 2 gün gerekli)"
+volatilite_html = "Yetersiz veri (en az 2 gun gerekli)"
 drawdown_html = "Yetersiz veri"
 if len(gecmis) >= 2:
     degerler = [g["toplam_deger"] for g in gecmis]
@@ -211,7 +210,7 @@ if len(gecmis) >= 2:
     ]
     if len(gunluk_getiriler) >= 2:
         volatilite = statistics.stdev(gunluk_getiriler)
-        volatilite_html = f"%{volatilite:.2f} (günlük std. sapma)"
+        volatilite_html = f"%{volatilite:.2f} (gunluk std. sapma)"
     
     zirve = degerler[0]
     maks_dusus = 0.0
