@@ -15,8 +15,7 @@ from reportlab.lib.units import mm
 from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.enums import TA_LEFT, TA_CENTER
-from reportlab.graphics.shapes import Drawing
-from reportlab.graphics.charts.barcharts import VerticalBarChart
+from reportlab.graphics.shapes import Drawing, Rect, String, Group
 
 # ==============================================================================
 # AYARLAR
@@ -225,7 +224,6 @@ enflasyon_farki = dogru_genel_degisim - tahmini_enflasyon
 enf_yon = "Uzerinde" if enflasyon_farki >= 0 else "Altinda"
 enf_renk = "#059669" if enflasyon_farki >= 0 else "#dc2626"
 
-# BURADAKİ GRAB HIZLI BOŞLUK HATASI TAMAMEN DÜZELTİLDİ
 def svg_cizgi_grafik(gecmis: list, genislik=640, yukseklik=140) -> str:
     if len(gecmis) < 2: 
         return '<p style="color:#94a3b8;font-size:13px;">Grafik icin yeterli veri yok.</p>'
@@ -238,3 +236,5 @@ def svg_cizgi_grafik(gecmis: list, genislik=640, yukseklik=140) -> str:
     for i, v in enumerate(degerler):
         x = pad + (i / (n - 1)) * (genislik - 2 * pad)
         y = yukseklik - pad - ((v - min_v) / span) * (yukseklik - 2 * pad)
+        noktalar.append((round(x, 1), round(y, 1)))
+    cizgi = " ".join(f"{x},{y}" for x, y in noktalar)
