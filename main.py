@@ -671,6 +671,7 @@ html_icerik = f"""<!DOCTYPE html>
                 <a href="portfoy_raporu.pdf" style="color:#2563eb; text-decoration:none; font-weight:600;">⬇ PDF indir</a> ·
                 <a href="portfoy_raporu.csv" style="color:#64748b; text-decoration:none; font-weight:500; font-size:12px;">CSV</a></p>
             </div>
+            <a href="midas.html" style="color:#2563eb; text-decoration:none; font-weight:600; font-size:14px; white-space:nowrap;">Midas Portföyüm →</a>
         </div>
 
         <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap:20px; margin-bottom:30px;">
