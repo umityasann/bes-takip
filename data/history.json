@@ -4,5 +4,18 @@
     "toplam_deger": 5198.04,
     "toplam_kar": 198.04,
     "toplam_degisim": 3.9608
+  },
+  {
+    "tarih": "2026-08-21",
+    "toplam_deger": 5216.85,
+    "toplam_kar": 216.85,
+    "toplam_degisim": 4.337,
+    "fonlar": {
+      "GEL": 0.444083,
+      "GEH": 2.894034,
+      "EMY": 0.011089,
+      "GHG": 1.222285,
+      "GHH": 0.403827
+    }
   }
 ]
