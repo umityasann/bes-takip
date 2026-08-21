@@ -223,6 +223,22 @@ gecmis.sort(key=lambda g: g["tarih"])
 gecmisi_kaydet(HISTORY_PATH, gecmis)
 
 # ------------------------------------------------------------------------------
+# GÜNLÜK KÂR/ZARAR — bir önceki güne kayıtlı toplam değere göre (history.json)
+# ------------------------------------------------------------------------------
+gunluk_kar_html = '<div style="font-size:11px; color:#a16207; margin-top:6px;">İlk gün — kıyaslanacak dünkü veri yok</div>'
+if len(gecmis) >= 2:
+    dunku_deger = gecmis[-2]["toplam_deger"]
+    gunluk_fark = toplam_guncel_deger - dunku_deger
+    gunluk_yuzde = (gunluk_fark / dunku_deger * 100) if dunku_deger else 0.0
+    g_renk = "#059669" if gunluk_fark >= 0 else "#dc2626"
+    g_isaret = "+" if gunluk_fark >= 0 else ""
+    gunluk_kar_html = (
+        f'<div style="display:inline-flex; align-items:center; gap:4px; margin-top:6px; '
+        f'background:{g_renk}1a; color:{g_renk}; font-size:12px; font-weight:700; '
+        f'padding:3px 8px; border-radius:999px;">Bugün: {g_isaret}{gunluk_fark:.2f} TL ({g_isaret}%{gunluk_yuzde:.2f})</div>'
+    )
+
+# ------------------------------------------------------------------------------
 # RİSK METRİKLERİ (geçmişten)
 # ------------------------------------------------------------------------------
 volatilite_html = "Yetersiz veri (en az 2 gün gerekli)"
@@ -243,6 +259,105 @@ if len(gecmis) >= 2:
         dusus = (v - zirve) / zirve * 100 if zirve else 0
         maks_dusus = min(maks_dusus, dusus)
     drawdown_html = f"%{maks_dusus:.2f}"
+
+# ------------------------------------------------------------------------------
+# DÖNEMSEL GETİRİLER — SADECE SİTENİN KENDİ history.json VERİSİNDEN
+# (dışarıdan hiçbir kaynak çekilmez; veri, panelin kendi takip başlangıcından
+# bu yana biriktirdiği günlük kayıtlara dayanır)
+# ------------------------------------------------------------------------------
+def donem_getirisi_hesapla(gecmis: list, gun: int):
+    """`gun` kadar gün öncesine ait en yakın (aynı veya önceki) kaydı bulup
+    bugüne kadarki % değişimi döner. Geçmiş o kadar geriye gitmiyorsa None
+    döner -> arayüzde 'Yetersiz veri' gösterilir, asla sahte 0.00 yazılmaz."""
+    if len(gecmis) < 2:
+        return None
+    hedef_tarih = bugun - timedelta(days=gun)
+    en_eski_tarih = datetime.strptime(gecmis[0]["tarih"], "%Y-%m-%d")
+    if en_eski_tarih > hedef_tarih:
+        return None
+
+    baslangic_kaydi = None
+    for g in gecmis:
+        g_tarih = datetime.strptime(g["tarih"], "%Y-%m-%d")
+        if g_tarih <= hedef_tarih:
+            baslangic_kaydi = g
+        else:
+            break
+    if baslangic_kaydi is None:
+        return None
+
+    baslangic_deger = baslangic_kaydi["toplam_deger"]
+    bitis_deger = gecmis[-1]["toplam_deger"]
+    if baslangic_deger == 0:
+        return None
+    return (bitis_deger - baslangic_deger) / baslangic_deger * 100
+
+
+DONEM_TANIMLARI = [
+    ("Son 1 Hafta", 7), ("Son 1 Ay", 30), ("Son 3 Ay", 90),
+    ("Son 6 Ay", 180), ("Son 1 Yıl", 365),
+]
+
+donem_kartlari_html = []
+for etiket, gun in DONEM_TANIMLARI:
+    getiri = donem_getirisi_hesapla(gecmis, gun)
+    if getiri is None:
+        deger_html = '<span style="font-size:15px; color:#94a3b8; font-weight:600;">Yetersiz veri</span>'
+    else:
+        renk = "#059669" if getiri >= 0 else "#dc2626"
+        deger_html = f'<span style="font-size:22px; font-weight:800; color:{renk};">%{getiri:+.2f}</span>'
+    donem_kartlari_html.append(f"""
+    <div style="flex:1; min-width:130px; background:#f8fafc; border:1px solid #e2e8f0; border-top:3px solid #14b8a6; border-radius:10px; padding:14px; text-align:center;">
+        <div style="font-size:11px; font-weight:600; color:#64748b; text-transform:uppercase; margin-bottom:8px;">{etiket}</div>
+        {deger_html}
+    </div>
+    """)
+donem_kartlari_html = "".join(donem_kartlari_html)
+
+# ------------------------------------------------------------------------------
+# FON DAĞILIM GRAFİĞİ (DONUT) — SAF SVG, fon_kayitlari'ndan otomatik üretilir.
+# Fon sayısı artınca (fon_tanimlari sözlüğüne yeni fon eklenince) hem grafik
+# hem lejant otomatik genişler, kod değişikliği gerekmez.
+# ------------------------------------------------------------------------------
+RENK_PALETI = ['#f59e0b', '#8b5cf6', '#2dd4bf', '#f472b6', '#38bdf8',
+               '#4ade80', '#fb7185', '#a78bfa', '#facc15', '#f97316']
+fon_renkleri = {r["kod"]: RENK_PALETI[i % len(RENK_PALETI)] for i, r in enumerate(fon_kayitlari)}
+
+
+def svg_donut_grafik(fon_kayitlari: list, renk_map: dict, boyut=220, kalinlik=34) -> str:
+    r = (boyut - kalinlik) / 2
+    cx = cy = boyut / 2
+    cevre = 2 * 3.14159265 * r
+    cumulatif = 0.0
+    parcalar = []
+    for rec in fon_kayitlari:
+        oran = rec["agirlik"] / 100
+        dash = oran * cevre
+        offset = -cumulatif * cevre
+        parcalar.append(
+            f'<circle cx="{cx}" cy="{cy}" r="{r}" fill="none" stroke="{renk_map[rec["kod"]]}" '
+            f'stroke-width="{kalinlik}" stroke-dasharray="{dash:.2f} {cevre - dash:.2f}" '
+            f'stroke-dashoffset="{offset:.2f}" transform="rotate(-90 {cx} {cy})"></circle>'
+        )
+        cumulatif += oran
+
+    return f"""
+    <svg viewBox="0 0 {boyut} {boyut}" style="width:180px; height:180px; flex-shrink:0;">
+        {"".join(parcalar)}
+        <text x="{cx}" y="{cy - 4}" text-anchor="middle" font-size="20" font-weight="800" fill="#0f172a">{len(fon_kayitlari)}</text>
+        <text x="{cx}" y="{cy + 14}" text-anchor="middle" font-size="10" fill="#94a3b8">FON</text>
+    </svg>
+    """
+
+
+donut_svg = svg_donut_grafik(fon_kayitlari, fon_renkleri)
+lejant_html = "".join(f"""
+    <div style="display:flex; align-items:center; gap:8px; margin-bottom:8px;">
+        <span style="width:11px; height:11px; border-radius:3px; background:{fon_renkleri[r['kod']]}; flex-shrink:0;"></span>
+        <span style="font-size:12.5px; color:#334155; font-weight:600;">{r['kod']}</span>
+        <span style="font-size:12px; color:#94a3b8; margin-left:auto;">%{r['agirlik']:.1f}</span>
+    </div>
+""" for r in fon_kayitlari)
 
 # ------------------------------------------------------------------------------
 # ENFLASYON KARŞILAŞTIRMA — TCMB EVDS resmi API'si (TP.FG.J0, TÜFE Genel Endeks)
@@ -525,6 +640,7 @@ html_icerik = f"""<!DOCTYPE html>
             <div style="background:#f0fdf4; padding:20px; border-radius:12px; border:1px solid #bbf7d0; border-left:6px solid #10b981;">
                 <div style="font-size:13px; font-weight:600; color:#15803d; text-transform:uppercase;">Toplam Net Portföy Kârı</div>
                 <div style="font-size:26px; font-weight:800; color:#166534; margin-top:8px;">+{genel_kar:.2f} TL</div>
+                {gunluk_kar_html}
             </div>
             <div style="background:#f0fdfa; padding:20px; border-radius:12px; border:1px solid #99f6e4;">
                 <div style="font-size:13px; font-weight:600; color:#0f766e; text-transform:uppercase;">Toplam Portföy Büyümesi</div>
@@ -548,10 +664,29 @@ html_icerik = f"""<!DOCTYPE html>
             </div>
         </div>
 
+        <div style="border:1px solid #e2e8f0; border-radius:12px; padding:20px; margin-bottom:30px;">
+            <h3 style="margin-top:0; margin-bottom:15px; color:#1e293b; font-size:15px;">📅 Dönemsel Getiriler <span style="font-weight:400; color:#94a3b8; font-size:11px;">· panelin kendi geçmiş verisinden</span></h3>
+            <div style="display:flex; gap:12px; flex-wrap:wrap;">
+                {donem_kartlari_html}
+            </div>
+        </div>
+
+        <div style="border:1px solid #e2e8f0; border-radius:12px; padding:20px; margin-bottom:30px; display:flex; gap:24px; flex-wrap:wrap; align-items:center;">
+            <div>
+                <h3 style="margin-top:0; margin-bottom:12px; color:#1e293b; font-size:15px;">🥧 Fon Dağılımı</h3>
+                {donut_svg}
+            </div>
+            <div style="flex:1; min-width:160px;">
+                <div style="font-size:11px; font-weight:600; color:#94a3b8; text-transform:uppercase; margin-bottom:10px;">{len(fon_kayitlari)} Fon · Ağırlık(%)</div>
+                {lejant_html}
+            </div>
+        </div>
+
         <div style="border:1px solid #e2e8f0; border-radius:12px; padding:20px; margin-bottom:30px; background:#fcfcfd;">
             <h3 style="margin-top:0; margin-bottom:15px; color:#1e293b; font-size:15px;">📈 Tarihsel Portföy Değeri</h3>
             {tarihsel_grafik_svg}
         </div>
+
 
         <div style="overflow-x:auto; margin-bottom:30px; border:1px solid #e2e8f0; border-radius:12px;">
             <table style="width:100%; border-collapse:collapse; text-align:left; font-size:14px;">
