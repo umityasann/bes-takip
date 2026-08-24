@@ -80,6 +80,7 @@ def tefas_fiyatlarini_cek(fon_kodlari: list, gun_sayisi_geriye: int = 7) -> dict
     yayınlamadığı için en son yayınlanan iş günü fiyatını bulur.
     Herhangi bir hata durumunda boş dict döner; Action bu yüzden çökmez,
     çağıran taraf YEDEK_FIYATLAR'a düşer."""
+    import traceback
     crawler = Crawler(timeout=REQUEST_TIMEOUT * 4, max_retry=3)
 
     for gun_ofset in range(gun_sayisi_geriye):
@@ -87,10 +88,12 @@ def tefas_fiyatlarini_cek(fon_kodlari: list, gun_sayisi_geriye: int = 7) -> dict
         try:
             df = crawler.fetch(tarih, columns="info", kind="EMK")
         except (TefasAPIError, TefasRateLimitError) as e:
-            print(f"TEFAS API hatası ({tarih}): {e}")
+            print(f"TEFAS API hatası ({tarih}): [{type(e).__name__}] {e}")
+            traceback.print_exc()
             continue
         except Exception as e:
-            print(f"Beklenmeyen hata ({tarih}): {e}")
+            print(f"Beklenmeyen hata ({tarih}): [{type(e).__name__}] {e}")
+            traceback.print_exc()
             continue
 
         if df is None or df.empty:
