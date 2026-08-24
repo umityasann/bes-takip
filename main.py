@@ -97,22 +97,31 @@ def tefas_fiyatlarini_cek(fon_kodlari: list, gun_sayisi_geriye: int = 7) -> dict
             continue
 
         if df is None or df.empty:
+            print(f"[{tarih}] df bos donuyor (hafta sonu/tatil olabilir)")
             continue  # o gün veri yok (hafta sonu/tatil) -> bir önceki güne bak
+
+        print(f"[{tarih}] df satir sayisi: {len(df)}, sutunlar: {list(df.columns)}")
+        print(f"[{tarih}] df icindeki ornek fund_code degerleri: {df['fund_code'].unique()[:15].tolist()}")
+        print(f"[{tarih}] aranan kodlar: {fon_kodlari}")
 
         df_filtreli = df[df["fund_code"].isin(fon_kodlari)]
         if df_filtreli.empty:
+            print(f"[{tarih}] FILTRE BOS -> aranan fon kodlari df icinde yok (kod uyusmazligi olabilir)")
             continue
 
         havuz = {}
         for _, row in df_filtreli.iterrows():
             try:
                 havuz[row["fund_code"]] = float(row["price"])
-            except (TypeError, ValueError):
+            except (TypeError, ValueError) as e:
+                print(f"[{tarih}] {row['fund_code']} fiyat parse hatasi: {row.get('price')!r} -> {e}")
                 continue
 
         if havuz:
-            print(f"TEFAS verisi bulundu: {tarih} ({len(havuz)}/{len(fon_kodlari)} fon)")
+            print(f"TEFAS verisi bulundu: {tarih} ({len(havuz)}/{len(fon_kodlari)} fon): {havuz}")
             return havuz
+        else:
+            print(f"[{tarih}] filtreli df doluydu ama havuz bos kaldi (tum fiyatlar parse hatasi verdi)")
 
     print("Son 7 günde TEFAS verisi bulunamadı, yedek fiyatlara geçildi.")
     return {}
