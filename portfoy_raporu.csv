@@ -1,7 +1,7 @@
 ﻿sep=,
 Fon Kodu,Fon Adı,Ağırlık(%),Maliyet(TL),Giriş Fiyatı,Güncel Fiyat,Değişim(%),Net Kâr/Zarar(TL),Kaynak
-GEL,Para Piyasası Emeklilik Yatırım Fonu,20.0,1000.0,0.436406,0.44297,1.5,15.04,Yedek
-GEH,Hisse Senedi Emeklilik Yatırım Fonu,30.0,1500.0,2.779911,2.8338,1.94,29.08,Yedek
-EMY,Altın Emeklilik Yatırım Fonu,20.0,1000.0,0.009987,0.010863,8.77,87.71,Yedek
-GHG,Dış Borçlanma Araçları Emeklilik Yatırım Fonu,20.0,1000.0,1.201487,1.215962,1.2,12.05,Yedek
-GHH,Sürdürülebilirlik Hisse Senedi Emeklilik Yatırım Fonu,10.0,500.0,0.395887,0.400294,1.11,5.57,Yedek
+GEL,Para Piyasası Emeklilik Yatırım Fonu,20.0,1000.0,0.436406,0.445987,2.2,21.95,Canlı
+GEH,Hisse Senedi Emeklilik Yatırım Fonu,30.0,1500.0,2.779911,2.94681,6.0,90.06,Canlı
+EMY,Altın Emeklilik Yatırım Fonu,20.0,1000.0,0.009987,0.011495,15.1,151.0,Canlı
+GHG,Dış Borçlanma Araçları Emeklilik Yatırım Fonu,20.0,1000.0,1.201487,1.224226,1.89,18.93,Canlı
+GHH,Sürdürülebilirlik Hisse Senedi Emeklilik Yatırım Fonu,10.0,500.0,0.395887,0.40512,2.33,11.66,Canlı
