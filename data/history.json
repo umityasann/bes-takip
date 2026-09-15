@@ -241,15 +241,15 @@
   },
   {
     "tarih": "2026-09-15",
-    "toplam_deger": 10551.02,
-    "toplam_kar": 551.02,
-    "toplam_degisim": 5.5102,
+    "toplam_deger": 10467.64,
+    "toplam_kar": 467.64,
+    "toplam_degisim": 4.6764,
     "fonlar": {
-      "GEL": 0.455489,
-      "GEH": 2.967321,
-      "EMY": 0.010896,
-      "GHG": 1.224567,
-      "GHH": 0.412065
+      "GEL": 0.455998,
+      "GEH": 2.915238,
+      "EMY": 0.01085,
+      "GHG": 1.219192,
+      "GHH": 0.407572
     }
   }
 ]
